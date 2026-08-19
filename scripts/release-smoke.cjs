@@ -9,14 +9,15 @@ const root = path.resolve(__dirname, "..");
 const cli = path.join(root, "release", "obsreview-cli", "obsreview.js");
 if (!fs.existsSync(cli)) throw new Error("Standalone CLI release is missing. Run npm run build first.");
 
-const version = invoke(["--version", "--json"]);
+const version = invoke(["--version", "--json"], path.join(os.tmpdir(), "obsreview-version-home"));
 if (version.status !== 0) throw new Error(version.stderr || version.stdout);
 const versionDocument = JSON.parse(version.stdout);
-if (versionDocument.ok !== true || versionDocument.version !== "0.1.0") {
+if (versionDocument.ok !== true || versionDocument.version !== "0.1.1") {
   throw new Error(`Unexpected standalone CLI version output: ${version.stdout}`);
 }
 
 const vault = fs.mkdtempSync(path.join(os.tmpdir(), "obsreview-release-smoke-"));
+const reviewHome = fs.mkdtempSync(path.join(os.tmpdir(), "obsreview-release-smoke-home-"));
 try {
   fs.mkdirSync(path.join(vault, "Framework"), { recursive: true });
   const target = path.join(vault, "Framework", "CAN.md");
@@ -35,7 +36,7 @@ try {
     "--agent",
     "release-smoke",
     "--json",
-  ]);
+  ], reviewHome);
   if (submit.status !== 0) throw new Error(submit.stderr || submit.stdout);
   const document = JSON.parse(submit.stdout);
   if (document.ok !== true || document.status !== "pending") {
@@ -44,6 +45,9 @@ try {
   if (fs.readFileSync(target, "utf8") !== "# CAN\n\nBase\n") {
     throw new Error("Standalone pending submit mutated target.");
   }
+  if (fs.existsSync(path.join(vault, ".obsreview"))) {
+    throw new Error("Standalone pending submit created review storage inside the vault.");
+  }
 
   const approve = invoke([
     "approve",
@@ -51,16 +55,20 @@ try {
     "--vault",
     vault,
     "--json",
-  ]);
+  ], reviewHome);
   if (approve.status !== 0) throw new Error(approve.stderr || approve.stdout);
   if (fs.readFileSync(target, "utf8") !== "# CAN\n\nRelease proposal\n") {
     throw new Error("Standalone approve did not apply proposal.");
   }
   console.log(`Standalone release CLI smoke passed: ${document.reviewId}`);
 } finally {
+  fs.rmSync(reviewHome, { recursive: true, force: true });
   fs.rmSync(vault, { recursive: true, force: true });
 }
 
-function invoke(arguments_) {
-  return spawnSync(process.execPath, [cli, ...arguments_], { encoding: "utf8" });
+function invoke(arguments_, reviewHome) {
+  return spawnSync(process.execPath, [cli, ...arguments_], {
+    encoding: "utf8",
+    env: { ...process.env, OBSREVIEW_HOME: reviewHome },
+  });
 }

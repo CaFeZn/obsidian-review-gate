@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cleanupVault, createVault, readVaultFile, writeVaultFile } from "./helpers";
 
@@ -15,10 +15,11 @@ interface CliRun {
   readonly document: Record<string, unknown>;
 }
 
-function runCli(args: readonly string[]): CliRun {
+function runCli(args: readonly string[], reviewHome: string): CliRun {
   const result = spawnSync(process.execPath, [cliEntry, ...args], {
     cwd: projectRoot,
     encoding: "utf8",
+    env: { ...process.env, OBSREVIEW_HOME: reviewHome },
   });
   const stdout = result.stdout.trim();
   return {
@@ -31,6 +32,7 @@ function runCli(args: readonly string[]): CliRun {
 
 test("CLI submit/status/update/cancel use one-line machine JSON and stable exit codes", async () => {
   const vault = await createVault();
+  const reviewHome = await createVault();
   try {
     await writeVaultFile(vault, "Framework/CAN.md", "base\n");
     const firstProposal = path.join(vault, "proposal-1.md");
@@ -49,12 +51,13 @@ test("CLI submit/status/update/cancel use one-line machine JSON and stable exit 
       "--agent",
       "codex",
       "--json",
-    ]);
+    ], reviewHome);
     assert.equal(submit.status, 0, submit.stderr);
     assert.equal(submit.document["ok"], true);
     assert.equal(submit.document["status"], "pending");
     assert.equal(submit.stdout.split("\n").length, 1);
     assert.equal(await readVaultFile(vault, "Framework/CAN.md"), "base\n");
+    await assert.rejects(access(path.join(vault, ".obsreview")));
     const reviewId = submit.document["reviewId"];
     assert.equal(typeof reviewId, "string");
 
@@ -64,7 +67,7 @@ test("CLI submit/status/update/cancel use one-line machine JSON and stable exit 
       "--vault",
       vault,
       "--json",
-    ]);
+    ], reviewHome);
     assert.equal(status.status, 0);
     assert.equal(status.document["revision"], 1);
 
@@ -80,7 +83,7 @@ test("CLI submit/status/update/cancel use one-line machine JSON and stable exit 
       "--expected-revision",
       "1",
       "--json",
-    ]);
+    ], reviewHome);
     assert.equal(update.status, 0, update.stderr);
     assert.equal(update.document["revision"], 2);
     assert.equal(await readVaultFile(vault, "Framework/CAN.md"), "base\n");
@@ -93,17 +96,19 @@ test("CLI submit/status/update/cancel use one-line machine JSON and stable exit 
       "--expected-revision",
       "2",
       "--json",
-    ]);
+    ], reviewHome);
     assert.equal(cancel.status, 6);
     assert.equal(cancel.document["status"], "cancelled");
     assert.equal(await readVaultFile(vault, "Framework/CAN.md"), "base\n");
   } finally {
+    await cleanupVault(reviewHome);
     await cleanupVault(vault);
   }
 });
 
 test("CLI rejects traversal with exit 2 and structured error", async () => {
   const vault = await createVault();
+  const reviewHome = await createVault();
   try {
     const proposal = path.join(vault, "proposal.md");
     await writeFile(proposal, "x", "utf8");
@@ -116,17 +121,19 @@ test("CLI rejects traversal with exit 2 and structured error", async () => {
       "--file",
       proposal,
       "--json",
-    ]);
+    ], reviewHome);
     assert.equal(result.status, 2);
     assert.equal(result.document["ok"], false);
     assert.equal(result.document["code"], "INVALID_TARGET_PATH");
   } finally {
+    await cleanupVault(reviewHome);
     await cleanupVault(vault);
   }
 });
 
 test("CLI manifest creates a multi-file review without touching targets", async () => {
   const vault = await createVault();
+  const reviewHome = await createVault();
   try {
     await writeVaultFile(vault, "A.md", "A0\n");
     await writeFile(path.join(vault, "a-new.md"), "A1\n", "utf8");
@@ -150,17 +157,19 @@ test("CLI manifest creates a multi-file review without touching targets", async 
       "--manifest",
       manifest,
       "--json",
-    ]);
+    ], reviewHome);
     assert.equal(result.status, 0, result.stderr);
     assert.equal((result.document["changes"] as unknown[]).length, 2);
     assert.equal(await readVaultFile(vault, "A.md"), "A0\n");
   } finally {
+    await cleanupVault(reviewHome);
     await cleanupVault(vault);
   }
 });
 
 test("CLI wait blocks on watcher and returns cancelled with exit 6", async () => {
   const vault = await createVault();
+  const reviewHome = await createVault();
   try {
     await writeVaultFile(vault, "note.md", "base\n");
     const proposal = path.join(vault, "proposal.md");
@@ -174,7 +183,7 @@ test("CLI wait blocks on watcher and returns cancelled with exit 6", async () =>
       "--file",
       proposal,
       "--json",
-    ]);
+    ], reviewHome);
     const reviewId = String(submit.document["reviewId"]);
 
     const child = spawn(
@@ -189,7 +198,11 @@ test("CLI wait blocks on watcher and returns cancelled with exit 6", async () =>
         "3000",
         "--json",
       ],
-      { cwd: projectRoot, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        cwd: projectRoot,
+        env: { ...process.env, OBSREVIEW_HOME: reviewHome },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
     let stdout = "";
     let stderr = "";
@@ -202,7 +215,7 @@ test("CLI wait blocks on watcher and returns cancelled with exit 6", async () =>
       stderr += chunk;
     });
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    const cancel = runCli(["cancel", reviewId, "--vault", vault, "--json"]);
+    const cancel = runCli(["cancel", reviewId, "--vault", vault, "--json"], reviewHome);
     assert.equal(cancel.status, 6);
     const exitCode = await new Promise<number | null>((resolve) => {
       child.once("close", resolve);
@@ -211,6 +224,7 @@ test("CLI wait blocks on watcher and returns cancelled with exit 6", async () =>
     const document = JSON.parse(stdout.trim()) as Record<string, unknown>;
     assert.equal(document["status"], "cancelled");
   } finally {
+    await cleanupVault(reviewHome);
     await cleanupVault(vault);
   }
 });

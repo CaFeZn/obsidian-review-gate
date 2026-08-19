@@ -7,7 +7,7 @@ Agent
   ↓
 obsreview submit
   ↓
-.obsreview/pending/<review-id>
+external review storage / pending / <review-id>
   ↓
 Obsidian Review Gate
   ↓
@@ -22,11 +22,11 @@ Vault
 
 ## 当前版本
 
-- 版本：`0.1.0`
+- 版本：`0.1.1`
 - Obsidian：桌面版，`1.5.0+`
 - CLI：Node.js `20+`
 - 状态：可通过 GitHub Release / BRAT 安装的公开第一版
-- 测试：34 项自动测试、CLI 端到端 smoke、插件单文件加载 smoke、独立发布包解压验收
+- 测试：35 项自动测试、CLI 端到端 smoke、插件单文件加载 smoke、独立发布包解压验收
 
 ## 已实现能力
 
@@ -34,8 +34,8 @@ Vault
 |---|---:|---|
 | Diff UI | ✅ | Unified / Split、行级与 inline 高亮 |
 | Hunk accept / reject | ✅ | 操作 proposal，不触碰 target |
-| CLI ↔ Obsidian | ✅ | 共享持久化目录 + filesystem watcher |
-| patch-before-write | ✅ | proposal 先进入 `.obsreview/pending` |
+| CLI ↔ Obsidian | ✅ | Vault 外共享持久化目录 + filesystem watcher |
+| patch-before-write | ✅ | proposal 先进入系统用户数据目录中的 pending state |
 | pending → apply | ✅ | Approve 才进入事务式 apply |
 | Conflict / base hash | ✅ | SHA-256，Approve 前权威复验 |
 | 文件监听 | ✅ | proposal、metadata/history、target advisory watcher |
@@ -44,7 +44,7 @@ Vault
 | Revision / lock | ✅ | review-level directory lock、optimistic revision |
 | Crash recovery | ✅ | transaction journal，启动时恢复或报告人工处理 |
 | History | ✅ | approved/rejected/cancelled 归档并保留审计内容 |
-| Create / Modify / Delete / Rename | ✅ | Delete 进入 `.obsreview/trash`，Rename 有冲突检查 |
+| Create / Modify / Delete / Rename | ✅ | Delete 进入外部 review trash，Rename 有冲突检查 |
 | Conservative rebase | ✅ | 仅自动合并不重叠的行级修改 |
 | Explicit force apply | ✅ | UI/CLI 显式危险操作，并保存被覆盖内容的备份 |
 
@@ -74,7 +74,7 @@ Vault
 1. 在 Obsidian 的第三方插件市场安装并启用 **BRAT**；
 2. 执行命令 `BRAT: Add a beta plugin for testing`；
 3. 输入仓库地址 `https://github.com/CaFeZn/obsidian-review-gate`；
-4. 选择最新版本或固定版本 `0.1.0`；
+4. 选择最新版本或固定版本 `0.1.1`；
 5. 安装完成后启用 **Obsidian Review Gate**。
 
 BRAT 会从 GitHub Release 下载 `main.js`、`manifest.json` 和 `styles.css`。Release tag、Release name 与 `manifest.json` 中的版本必须一致。
@@ -148,6 +148,14 @@ $env:OBSREVIEW_VAULT = "D:\Notes"
 export OBSREVIEW_VAULT=/home/me/Notes
 ```
 
+Review 协议数据默认保存在系统用户数据目录，并按 Vault 路径哈希隔离。Windows 默认位置为：
+
+```text
+%LOCALAPPDATA%\ObsidianReviewGate\vaults\<vault-hash>\.obsreview\
+```
+
+可用 `OBSREVIEW_HOME` 覆盖用户数据根目录。不要将它指回受保护的 Vault。
+
 ---
 
 # 最简工作流
@@ -184,7 +192,7 @@ obsreview submit `
 此时：
 
 - `Framework/CAN.md` 仍是原内容；
-- 原内容和 proposal 位于 `.obsreview/pending/<review-id>/`；
+- base snapshot 和 proposal 位于 Vault 外的 review storage；
 - Obsidian Review Gate 自动显示该 Review。
 
 ## Wait
@@ -473,15 +481,17 @@ proposal = P
 Force Apply 必须显式确认。被覆盖的 current 内容会进入：
 
 ```text
-.obsreview/trash/<review-id>/.../.backups/
+<review-storage>/.obsreview/trash/<review-id>/.../.backups/
 ```
 
 ---
 
 # 持久化布局
 
+每个 Vault 使用独立的外部目录。Windows 默认布局如下：
+
 ```text
-.obsreview/
+%LOCALAPPDATA%/ObsidianReviewGate/vaults/<vault-hash>/.obsreview/
 ├── pending/
 │   └── <review-id>/
 │       ├── meta.json
@@ -500,7 +510,7 @@ Force Apply 必须显式确认。被覆盖的 current 内容会进入：
 └── trash/
 ```
 
-插件通过 CSS 隐藏 `.obsreview` 在常规文件浏览器中的显示，降低对笔记体验的干扰；CLI 与插件仍直接使用该目录作为持久化事实源。
+CLI 与插件通过同一个 Vault 路径哈希定位该目录，因此它们共享持久化事实源，同时不会让 TSafe 处理 review metadata。Vault 内只保留正式笔记，且只有 Approve 会写 target。
 
 Metadata 使用 temp + fsync/close + rename 的安全更新方式。proposal 外部原子保存会被下一次读取/Watcher reconcile 到 metadata，并递增 revision。
 

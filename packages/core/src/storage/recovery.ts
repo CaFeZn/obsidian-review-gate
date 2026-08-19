@@ -21,14 +21,14 @@ export async function recoverTransactions(
   store: ReviewStore,
 ): Promise<readonly RecoveryItem[]> {
   await store.initialize();
-  const root = reviewLayout(store.vaultRoot).transactions;
+  const root = reviewLayout(store.storageBase).transactions;
   const results: RecoveryItem[] = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const directory = path.join(root, entry.name);
     let journal: TransactionJournal;
     try {
-      journal = await readJournal(directory, store.vaultRoot);
+      journal = await readJournal(directory, store.vaultRoot, store.storageBase);
     } catch (error) {
       results.push({
         transactionId: entry.name,
@@ -43,7 +43,7 @@ export async function recoverTransactions(
       if (review.status === "approved" || journal.phase === "committed") {
         try {
           await preserveTransactionBackups(
-            store.vaultRoot,
+            store.storageBase,
             journal.reviewId,
             journal.entries,
           );

@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, type TAbstractFile, type TFile } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import type { Review, ReviewChange } from "../../../core/src/model/review";
 import { ReviewError } from "../../../core/src/model/errors";
 import type { ReviewService } from "../../../core/src/service/review-service";
@@ -206,9 +206,6 @@ export class ReviewGateView extends ItemView {
     const mutable = review.status === "pending" || review.status === "conflicted";
     if (mutable && currentChange.proposalContent !== null) {
       addButton(actionBar, "Edit proposal", () => this.editProposal(review, currentChange));
-      addButton(actionBar, "Open proposal note", () =>
-        this.openProposalNote(review, currentChange),
-      );
     }
     addToggle(actionBar, "Unified", this.mode === "unified", () => {
       this.mode = "unified";
@@ -336,21 +333,6 @@ export class ReviewGateView extends ItemView {
     });
   }
 
-  private async openProposalNote(review: Review, change: ReviewChange): Promise<void> {
-    if (change.proposalContent === null) return;
-    const proposalPath = `.obsreview/pending/${review.id}/changes/${change.id}/proposal.md`;
-    const file = this.app.vault.getAbstractFileByPath(proposalPath);
-    if (!isTFile(file)) {
-      new Notice(`Proposal note is unavailable: ${proposalPath}`);
-      return;
-    }
-    await this.app.workspace.getLeaf(true).openFile(file);
-    new Notice(
-      "Editing this proposal note updates pending state only; the target remains unchanged until Approve.",
-      8_000,
-    );
-  }
-
   private editProposal(review: Review, change: ReviewChange): void {
     if (change.proposalContent === null) return;
     new ProposalEditModal(
@@ -401,7 +383,7 @@ export class ReviewGateView extends ItemView {
     new ConfirmActionModal(
       this.app,
       "Force Apply conflicted review",
-      "Danger: this bypasses base-hash conflict refusal and can overwrite current target changes. A recoverable backup is retained under .obsreview/trash. Use only after comparing Base, Current, and Proposal.",
+      "Danger: this bypasses base-hash conflict refusal and can overwrite current target changes. A recoverable backup is retained in external review storage. Use only after comparing Base, Current, and Proposal.",
       "Force Apply",
       true,
       async () => {
@@ -517,8 +499,4 @@ function formatRelative(timestamp: string): string {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-function isTFile(file: TAbstractFile | null): file is TFile {
-  return file !== null && "extension" in file;
 }

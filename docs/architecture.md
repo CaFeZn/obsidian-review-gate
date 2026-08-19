@@ -1,7 +1,7 @@
 # Obsidian Review Gate — Architecture and Phase 0 Research
 
 文档日期：2026-08-19<br>
-版本：0.1.0
+版本：0.1.1
 
 ## 1. 目标与非目标
 
@@ -67,11 +67,11 @@ Agent → obsreview CLI → Pending Review → Obsidian Review UI → Approve �
 
 选择 **共享文件 + watcher**。
 
-事实源是 `.obsreview`，而不是 UI 内存：
+事实源是系统用户数据目录中按 Vault 隔离的 `.obsreview`，而不是 UI 内存或 Vault 内的隐藏目录：
 
 ```text
 CLI ─┐
-     ├── .obsreview persistent state ── Obsidian plugin
+     ├── external .obsreview state ── Obsidian plugin
 UI  ─┘
 ```
 
@@ -161,7 +161,7 @@ Rebase
 这些操作只改变：
 
 ```text
-.obsreview/pending/<id>/changes/<change-id>/proposal.md
+<review-storage>/.obsreview/pending/<id>/changes/<change-id>/proposal.md
 meta.json revision/hash/decisions
 ```
 
@@ -235,7 +235,7 @@ Approve 不信任 watcher 的“未发现冲突”结论。
 每个 Review 使用目录锁：
 
 ```text
-.obsreview/state/locks/<review-id>.lock/
+<review-storage>/.obsreview/state/locks/<review-id>.lock/
 └── owner.json
 ```
 
@@ -348,7 +348,7 @@ Base / Current / Proposal
 Delete 不永久销毁：target 被移动到：
 
 ```text
-.obsreview/trash/<review-id>/<target>
+<review-storage>/.obsreview/trash/<review-id>/<target>
 ```
 
 Approved/rejected/cancelled Review 移入 history，保留：
@@ -377,7 +377,7 @@ Metadata 自身采用 temp + close/fsync + atomic rename。
 - core diff 有 timeout/max-edit safety limit；
 - CM6 decoration 对 base+proposal 超过约 1 MB 时关闭，避免输入时同步重算长时间阻塞；
 - history/list 使用轻量 metadata；
-- `.obsreview` 从普通文件导航中隐藏。
+- review storage 位于 Vault 外，不参与普通文件导航或 Vault 插件处理。
 
 未来可把超大文件 diff 放入 Worker，但这不是安全正确性的前提。
 

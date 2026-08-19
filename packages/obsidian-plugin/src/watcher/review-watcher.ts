@@ -19,7 +19,7 @@ export class ReviewWatcher {
   private stopped = true;
 
   public constructor(
-    private readonly vaultRoot: string,
+    private readonly storageBase: string,
     private readonly onChange: () => void | Promise<void>,
     private readonly options: ReviewWatcherOptions = {},
   ) {}
@@ -43,7 +43,7 @@ export class ReviewWatcher {
     if (this.stopped) return;
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
-    const layout = reviewLayout(this.vaultRoot);
+    const layout = reviewLayout(this.storageBase);
 
     try {
       const recursive = watch(
@@ -67,7 +67,7 @@ export class ReviewWatcher {
 
   private async installFallbackWatchers(): Promise<void> {
     if (this.stopped) return;
-    const layout = reviewLayout(this.vaultRoot);
+    const layout = reviewLayout(this.storageBase);
     for (const root of [layout.pending, layout.history, layout.events]) {
       this.watchDirectory(root, root === layout.pending);
     }

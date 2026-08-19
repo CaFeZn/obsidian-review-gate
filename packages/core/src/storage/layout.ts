@@ -12,8 +12,8 @@ export interface ReviewLayout {
   readonly trash: string;
 }
 
-export function reviewLayout(vaultRoot: string): ReviewLayout {
-  const root = path.join(vaultRoot, ".obsreview");
+export function reviewLayout(storageBase: string): ReviewLayout {
+  const root = path.join(storageBase, ".obsreview");
   return {
     root,
     pending: path.join(root, "pending"),
@@ -26,12 +26,12 @@ export function reviewLayout(vaultRoot: string): ReviewLayout {
   };
 }
 
-export function pendingReviewDirectory(vaultRoot: string, reviewId: string): string {
-  return path.join(reviewLayout(vaultRoot).pending, safeReviewId(reviewId));
+export function pendingReviewDirectory(storageBase: string, reviewId: string): string {
+  return path.join(reviewLayout(storageBase).pending, safeReviewId(reviewId));
 }
 
-export function historyReviewDirectory(vaultRoot: string, reviewId: string): string {
-  return path.join(reviewLayout(vaultRoot).history, safeReviewId(reviewId));
+export function historyReviewDirectory(storageBase: string, reviewId: string): string {
+  return path.join(reviewLayout(storageBase).history, safeReviewId(reviewId));
 }
 
 export function reviewMetaPath(reviewDirectory: string): string {
@@ -42,25 +42,29 @@ export function changeDirectory(reviewDirectory: string, changeId: string): stri
   return path.join(reviewDirectory, "changes", safeChangeId(changeId));
 }
 
-export function eventPath(vaultRoot: string, reviewId: string): string {
-  return path.join(reviewLayout(vaultRoot).events, `${safeReviewId(reviewId)}.json`);
+export function eventPath(storageBase: string, reviewId: string): string {
+  return path.join(reviewLayout(storageBase).events, `${safeReviewId(reviewId)}.json`);
 }
 
-export function lockDirectory(vaultRoot: string, reviewId: string): string {
-  return path.join(reviewLayout(vaultRoot).locks, `${safeReviewId(reviewId)}.lock`);
+export function lockDirectory(storageBase: string, reviewId: string): string {
+  return path.join(reviewLayout(storageBase).locks, `${safeReviewId(reviewId)}.lock`);
 }
 
-export function transactionDirectory(vaultRoot: string, transactionId: string): string {
-  return path.join(reviewLayout(vaultRoot).transactions, safeOpaqueId(transactionId));
+export function transactionDirectory(storageBase: string, transactionId: string): string {
+  return path.join(reviewLayout(storageBase).transactions, safeOpaqueId(transactionId));
 }
 
 export function trashTargetPath(
-  vaultRoot: string,
+  storageBase: string,
   reviewId: string,
   target: string,
 ): string {
   const normalized = normalizeVaultRelativeTarget(target);
-  return path.join(reviewLayout(vaultRoot).trash, safeReviewId(reviewId), ...normalized.split("/"));
+  return path.join(
+    reviewLayout(storageBase).trash,
+    safeReviewId(reviewId),
+    ...normalized.split("/"),
+  );
 }
 
 export function safeReviewId(value: string): string {

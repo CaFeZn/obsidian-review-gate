@@ -49,13 +49,15 @@ export interface ListReviewsOptions {
 
 export class ReviewStore {
   public readonly vaultRoot: string;
+  public readonly storageBase: string;
 
-  public constructor(vaultRoot: string) {
+  public constructor(vaultRoot: string, storageBase: string = vaultRoot) {
     this.vaultRoot = path.resolve(vaultRoot);
+    this.storageBase = path.resolve(storageBase);
   }
 
   public async initialize(): Promise<void> {
-    const layout = reviewLayout(this.vaultRoot);
+    const layout = reviewLayout(this.storageBase);
     await Promise.all([
       mkdir(layout.pending, { recursive: true }),
       mkdir(layout.history, { recursive: true }),
@@ -68,7 +70,7 @@ export class ReviewStore {
 
   public async create(review: Review): Promise<void> {
     await this.initialize();
-    const directory = pendingReviewDirectory(this.vaultRoot, review.id);
+    const directory = pendingReviewDirectory(this.storageBase, review.id);
     try {
       await mkdir(directory);
     } catch (error) {
@@ -97,9 +99,9 @@ export class ReviewStore {
 
   public async loadLocated(reviewId: string): Promise<LoadedReview> {
     safeReviewId(reviewId);
-    const pending = pendingReviewDirectory(this.vaultRoot, reviewId);
+    const pending = pendingReviewDirectory(this.storageBase, reviewId);
     if (await exists(pending)) return this.loadFromDirectory(pending, "pending");
-    const history = historyReviewDirectory(this.vaultRoot, reviewId);
+    const history = historyReviewDirectory(this.storageBase, reviewId);
     if (await exists(history)) return this.loadFromDirectory(history, "history");
     throw new ReviewError("REVIEW_NOT_FOUND", `Review not found: ${reviewId}`, {
       reviewId,
@@ -113,7 +115,7 @@ export class ReviewStore {
   }
 
   public async archive(review: Review): Promise<void> {
-    const source = pendingReviewDirectory(this.vaultRoot, review.id);
+    const source = pendingReviewDirectory(this.storageBase, review.id);
     if (!(await exists(source))) {
       throw new ReviewError(
         "INVALID_STATE_TRANSITION",
@@ -122,7 +124,7 @@ export class ReviewStore {
       );
     }
     await this.saveAt(review, source);
-    const destination = historyReviewDirectory(this.vaultRoot, review.id);
+    const destination = historyReviewDirectory(this.storageBase, review.id);
     if (await exists(destination)) {
       throw new ReviewError(
         "IO_ERROR",
@@ -144,8 +146,8 @@ export class ReviewStore {
     for (const location of locations) {
       const root =
         location === "pending"
-          ? reviewLayout(this.vaultRoot).pending
-          : reviewLayout(this.vaultRoot).history;
+          ? reviewLayout(this.storageBase).pending
+          : reviewLayout(this.storageBase).history;
       for (const entry of await readdir(root, { withFileTypes: true })) {
         if (!entry.isDirectory() || !/^[0-9A-HJKMNP-TV-Z]{26}$/u.test(entry.name)) {
           continue;
@@ -185,9 +187,9 @@ export class ReviewStore {
     readonly directory: string;
   }> {
     safeReviewId(reviewId);
-    const pending = pendingReviewDirectory(this.vaultRoot, reviewId);
+    const pending = pendingReviewDirectory(this.storageBase, reviewId);
     if (await exists(pending)) return { location: "pending", directory: pending };
-    const history = historyReviewDirectory(this.vaultRoot, reviewId);
+    const history = historyReviewDirectory(this.storageBase, reviewId);
     if (await exists(history)) return { location: "history", directory: history };
     throw new ReviewError("REVIEW_NOT_FOUND", `Review not found: ${reviewId}`, {
       reviewId,
@@ -305,7 +307,7 @@ export class ReviewStore {
 
   private async writeEvent(review: Review): Promise<void> {
     await atomicWriteFile(
-      eventPath(this.vaultRoot, review.id),
+      eventPath(this.storageBase, review.id),
       `${JSON.stringify({
         reviewId: review.id,
         status: review.status,

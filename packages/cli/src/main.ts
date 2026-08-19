@@ -6,6 +6,7 @@ import {
   type SubmitOperation,
 } from "../../core/src/service/review-service";
 import { waitForReview } from "../../core/src/protocol/wait";
+import { userDataReviewStorageBase } from "../../core/src/storage/user-data";
 import {
   booleanFlag,
   flag,
@@ -27,7 +28,7 @@ import {
   reviewDocument,
 } from "./output";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 export async function run(argv: readonly string[]): Promise<number> {
   const jsonRequested = argv.includes("--json") || argv.some((item) => item.startsWith("--json="));
@@ -65,7 +66,9 @@ export async function run(argv: readonly string[]): Promise<number> {
         "Missing --vault (or OBSREVIEW_VAULT).",
       );
     }
-    const { service, recovery } = await ReviewService.open(vault);
+    const { service, recovery } = await ReviewService.open(vault, {
+      storageBase: userDataReviewStorageBase(vault),
+    });
     if (recovery.some((item) => item.action === "left-for-manual-recovery")) {
       throw new ReviewError(
         "IO_ERROR",

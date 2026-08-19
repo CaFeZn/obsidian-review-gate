@@ -22,7 +22,7 @@ export async function waitForReview(
   const initial = await store.load(reviewId);
   if (initial.status !== "pending") return initial;
 
-  const layout = reviewLayout(store.vaultRoot);
+  const layout = reviewLayout(store.storageBase);
   const watchRoots = [layout.events, layout.pending, layout.history];
   return new Promise<Review>((resolve, reject) => {
     const watchers: FSWatcher[] = [];

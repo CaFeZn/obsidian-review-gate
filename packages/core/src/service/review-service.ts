@@ -58,23 +58,32 @@ export interface HunkDecisionInput extends RevisionOptions {
   readonly decision: HunkDecisionKind;
 }
 
+export interface ReviewServiceOpenOptions {
+  readonly diffEngine?: DiffEngine;
+  readonly storageBase?: string;
+}
+
 export class ReviewService {
   public readonly vaultRoot: string;
   public readonly store: ReviewStore;
   public readonly diffEngine: DiffEngine;
 
-  private constructor(vaultRoot: string, diffEngine: DiffEngine) {
+  private constructor(vaultRoot: string, storageBase: string, diffEngine: DiffEngine) {
     this.vaultRoot = vaultRoot;
-    this.store = new ReviewStore(vaultRoot);
+    this.store = new ReviewStore(vaultRoot, storageBase);
     this.diffEngine = diffEngine;
   }
 
   public static async open(
     vault: string,
-    diffEngine: DiffEngine = new JsDiffEngine(),
+    options: ReviewServiceOpenOptions = {},
   ): Promise<{ readonly service: ReviewService; readonly recovery: readonly RecoveryItem[] }> {
     const vaultRoot = await resolveVaultRoot(vault);
-    const service = new ReviewService(vaultRoot, diffEngine);
+    const service = new ReviewService(
+      vaultRoot,
+      options.storageBase ?? vaultRoot,
+      options.diffEngine ?? new JsDiffEngine(),
+    );
     await service.store.initialize();
     const recovery = await recoverTransactions(service.store);
     return { service, recovery };
@@ -178,7 +187,7 @@ export class ReviewService {
   }
 
   public async get(reviewId: string): Promise<Review> {
-    return withDirectoryLock(lockDirectory(this.vaultRoot, reviewId), async () => {
+    return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
       return this.loadAndReconcile(reviewId);
     });
   }
@@ -200,7 +209,7 @@ export class ReviewService {
     reviewId: string,
     input: UpdateProposalInput,
   ): Promise<Review> {
-    return withDirectoryLock(lockDirectory(this.vaultRoot, reviewId), async () => {
+    return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
       const review = await this.loadAndReconcile(reviewId);
       assertMutable(review);
       assertExpectedRevision(review, input.expectedRevision);
@@ -234,7 +243,7 @@ export class ReviewService {
     reviewId: string,
     input: HunkDecisionInput,
   ): Promise<Review> {
-    return withDirectoryLock(lockDirectory(this.vaultRoot, reviewId), async () => {
+    return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
       const review = await this.loadAndReconcile(reviewId);
       assertMutable(review);
       assertExpectedRevision(review, input.expectedRevision);
@@ -270,7 +279,7 @@ export class ReviewService {
   }
 
   public async markPotentialConflict(reviewId: string): Promise<Review> {
-    return withDirectoryLock(lockDirectory(this.vaultRoot, reviewId), async () => {
+    return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
       const review = await this.loadAndReconcile(reviewId);
       if (review.status !== "pending" && review.status !== "conflicted") return review;
       const inspection = await inspectReviewConflicts(this.vaultRoot, review);
@@ -315,7 +324,7 @@ export class ReviewService {
     reviewId: string,
     options: RevisionOptions = {},
   ): Promise<Review> {
-    return withDirectoryLock(lockDirectory(this.vaultRoot, reviewId), async () => {
+    return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
       const review = await this.loadAndReconcile(reviewId);
       assertMutable(review);
       assertExpectedRevision(review, options.expectedRevision);
@@ -408,7 +417,7 @@ export class ReviewService {
     status: "rejected" | "cancelled",
     options: RevisionOptions,
   ): Promise<Review> {
-    return withDirectoryLock(lockDirectory(this.vaultRoot, reviewId), async () => {
+    return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
       const review = await this.loadAndReconcile(reviewId);
       assertMutable(review);
       assertExpectedRevision(review, options.expectedRevision);

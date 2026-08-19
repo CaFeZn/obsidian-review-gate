@@ -8,6 +8,7 @@ import {
   pendingReviewDirectory,
   reviewMetaPath,
   sha256,
+  trashTargetPath,
 } from "../packages/core/src/index";
 import { cleanupVault, createVault, readVaultFile, writeVaultFile } from "./helpers";
 
@@ -34,6 +35,51 @@ test("submit snapshots base but cannot mutate target", async () => {
     assert.equal(review.changes[0]?.baseHash, sha256("A\n"));
     assert.equal(await readVaultFile(vault, "Framework/CAN.md"), "A\n");
   } finally {
+    await cleanupVault(vault);
+  }
+});
+
+test("review storage can live outside the vault while approval still writes the target", async () => {
+  const vault = await createVault();
+  const storageBase = await createVault();
+  try {
+    await writeVaultFile(vault, "note.md", "base\n");
+    await writeVaultFile(vault, "old.md", "recoverable\n");
+    const service = (await ReviewService.open(vault, { storageBase })).service;
+    const review = await service.submit({
+      changes: [
+        { target: "note.md", proposalContent: "approved\n" },
+        { operation: "delete", target: "old.md" },
+      ],
+    });
+
+    assert.equal(service.store.storageBase, path.resolve(storageBase));
+    await assert.rejects(access(path.join(vault, ".obsreview")));
+    assert.equal(
+      await readFile(
+        path.join(
+          pendingReviewDirectory(storageBase, review.id),
+          "changes",
+          "0001",
+          "proposal.md",
+        ),
+        "utf8",
+      ),
+      "approved\n",
+    );
+    assert.equal(await readVaultFile(vault, "note.md"), "base\n");
+
+    await service.approve(review.id);
+    assert.equal(await readVaultFile(vault, "note.md"), "approved\n");
+    await assert.rejects(access(path.join(vault, "old.md")));
+    assert.equal(
+      await readFile(trashTargetPath(storageBase, review.id, "old.md"), "utf8"),
+      "recoverable\n",
+    );
+    await assert.rejects(access(pendingReviewDirectory(storageBase, review.id)));
+    assert.equal((await service.get(review.id)).status, "approved");
+  } finally {
+    await cleanupVault(storageBase);
     await cleanupVault(vault);
   }
 });

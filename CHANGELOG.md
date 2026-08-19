@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1 — 2026-08-19
+
+- Moved review protocol state to a per-vault directory under the operating system user-data root.
+- Fixed pending reviews being hidden as corrupted when TSafe transforms Vault files inside Obsidian.
+- Kept formal targets inside the Vault and unchanged until explicit approval.
+- Removed the obsolete action that tried to open an external proposal as a Vault note.
+
 ## 0.1.0 — 2026-08-19
 
 - Initial local Review Gate release.

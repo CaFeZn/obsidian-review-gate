@@ -14,7 +14,12 @@ import { inspectReviewConflicts } from "../conflict/check";
 import { resolveSafeTarget, isPathInside } from "../path/safe-path";
 import { ReviewStore } from "../storage/review-store";
 import { atomicWriteFile, exists, fsyncDirectory } from "../storage/atomic";
-import { lockDirectory, transactionDirectory, trashTargetPath } from "../storage/layout";
+import {
+  lockDirectory,
+  reviewLayout,
+  transactionDirectory,
+  trashTargetPath,
+} from "../storage/layout";
 import { withDirectoryLock } from "../storage/lock";
 
 export interface ApproveOptions {
@@ -64,7 +69,7 @@ export async function approveReview(
   options: ApproveOptions = {},
 ): Promise<ApplyResult> {
   return withDirectoryLock(
-    lockDirectory(store.vaultRoot, reviewId),
+    lockDirectory(store.storageBase, reviewId),
     async () => {
       let located = await store.loadLocated(reviewId);
       let review = located.review;
@@ -109,9 +114,15 @@ export async function approveReview(
       }
 
       const transactionId = `${review.id}-${Date.now()}-${randomBytes(5).toString("hex")}`;
-      const txDirectory = transactionDirectory(store.vaultRoot, transactionId);
+      const txDirectory = transactionDirectory(store.storageBase, transactionId);
       await mkdir(txDirectory, { recursive: false });
-      let journal = await prepareTransaction(store.vaultRoot, review, transactionId, txDirectory);
+      let journal = await prepareTransaction(
+        store.vaultRoot,
+        store.storageBase,
+        review,
+        transactionId,
+        txDirectory,
+      );
 
       try {
         // Authoritative all-file validation is repeated after staging and before
@@ -145,7 +156,7 @@ export async function approveReview(
         await store.archive(approved);
         journal = { ...journal, phase: "committed" };
         await writeJournal(txDirectory, journal);
-        await preserveTransactionBackups(store.vaultRoot, review.id, journal.entries);
+        await preserveTransactionBackups(store.storageBase, review.id, journal.entries);
         await rm(txDirectory, { recursive: true, force: true });
         return { review: approved, transactionId };
       } catch (error) {
@@ -157,7 +168,7 @@ export async function approveReview(
           if (located.review.status === "approved") {
             try {
               await preserveTransactionBackups(
-                store.vaultRoot,
+                store.storageBase,
                 review.id,
                 journal.entries,
               );
@@ -233,6 +244,7 @@ export async function approveReview(
 
 async function prepareTransaction(
   vaultRoot: string,
+  storageBase: string,
   review: Review,
   transactionId: string,
   txDirectory: string,
@@ -257,7 +269,7 @@ async function prepareTransaction(
     };
     const mutable = entry as Mutable<TransactionEntry>;
     if (change.operation === "delete") {
-      mutable.trashPath = trashTargetPath(vaultRoot, review.id, change.target);
+      mutable.trashPath = trashTargetPath(storageBase, review.id, change.target);
     }
     if (change.operation === "rename") {
       if (change.newTarget === undefined) {
@@ -520,7 +532,7 @@ async function rollbackEntry(entry: TransactionEntry): Promise<void> {
 }
 
 export async function preserveTransactionBackups(
-  vaultRoot: string,
+  storageBase: string,
   reviewId: string,
   entries: readonly TransactionEntry[],
 ): Promise<void> {
@@ -534,7 +546,7 @@ export async function preserveTransactionBackups(
     for (const candidate of backupCandidates) {
       if (!(await exists(candidate.source))) continue;
       const destination = path.join(
-        path.dirname(trashTargetPath(vaultRoot, reviewId, entry.target)),
+        path.dirname(trashTargetPath(storageBase, reviewId, entry.target)),
         ".backups",
         entry.changeId,
         candidate.name,
@@ -560,6 +572,7 @@ export async function writeJournal(
 export async function readJournal(
   transactionDirectoryPath: string,
   vaultRoot: string,
+  storageBase: string = vaultRoot,
 ): Promise<TransactionJournal> {
   const parsed: unknown = JSON.parse(
     await readFile(path.join(transactionDirectoryPath, "journal.json"), "utf8"),
@@ -570,19 +583,27 @@ export async function readJournal(
       `Invalid transaction journal: ${transactionDirectoryPath}`,
     );
   }
+  const storageRoot = reviewLayout(storageBase).root;
   for (const entry of parsed.entries) {
-    for (const candidate of [
-      entry.targetPath,
-      entry.stagePath,
-      entry.backupPath,
-      entry.newTargetPath,
-      entry.newTargetBackupPath,
-      entry.trashPath,
-    ]) {
+    for (const candidate of [entry.targetPath, entry.newTargetPath]) {
       if (candidate !== undefined && candidate !== null && !isPathInside(vaultRoot, candidate)) {
         throw new ReviewError(
           "INVALID_TARGET_PATH",
           "Transaction journal contains a path outside the vault.",
+          { transactionDirectoryPath, candidate },
+        );
+      }
+    }
+    for (const candidate of [
+      entry.stagePath,
+      entry.backupPath,
+      entry.newTargetBackupPath,
+      entry.trashPath,
+    ]) {
+      if (candidate !== undefined && candidate !== null && !isPathInside(storageRoot, candidate)) {
+        throw new ReviewError(
+          "INVALID_TARGET_PATH",
+          "Transaction journal contains a path outside review storage.",
           { transactionDirectoryPath, candidate },
         );
       }

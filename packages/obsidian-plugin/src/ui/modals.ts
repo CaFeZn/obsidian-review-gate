@@ -22,7 +22,7 @@ export class ProposalEditModal extends Modal {
     this.contentEl.empty();
     this.contentEl.createEl("p", {
       cls: "obsreview-modal-note",
-      text: "Saving updates only .obsreview proposal state. The target file is written only by Approve.",
+      text: "Saving updates only the proposal in external review storage. The target file is written only by Approve.",
     });
     const editorHost = this.contentEl.createDiv({ cls: "obsreview-proposal-editor" });
     this.controller = tryCreateMergeEditor(
