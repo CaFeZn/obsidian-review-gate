@@ -1,0 +1,35 @@
+{
+  "name": "obsidian-review-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local approval gate between external agents and an Obsidian vault",
+  "license": "MIT",
+  "bin": {
+    "obsreview": "packages/cli/bin/obsreview.cjs"
+  },
+  "scripts": {
+    "clean": "node scripts/clean.cjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "node scripts/build.cjs",
+    "test": "node scripts/test.cjs",
+    "check": "npm run lint && npm run test && npm run build && npm run smoke && npm run plugin-smoke && npm run release-smoke",
+    "smoke": "node scripts/smoke.cjs",
+    "lint": "npm run typecheck && node scripts/source-check.cjs",
+    "plugin-smoke": "node scripts/plugin-load-smoke.cjs",
+    "release-smoke": "node scripts/release-smoke.cjs",
+    "package": "npm run check && node scripts/package.cjs && npm run artifact-smoke && npm run delivery",
+    "artifact-smoke": "node scripts/artifact-smoke.cjs",
+    "delivery": "node scripts/delivery.cjs"
+  },
+  "devDependencies": {
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6",
+    "@types/node": "26.1.2",
+    "esbuild": "0.28.1",
+    "obsidian": "1.12.0",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

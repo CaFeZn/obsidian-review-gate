@@ -1,0 +1,362 @@
+.obsreview-view {
+  --obsreview-added: color-mix(in srgb, var(--color-green) 16%, transparent);
+  --obsreview-removed: color-mix(in srgb, var(--color-red) 16%, transparent);
+  --obsreview-border: var(--background-modifier-border);
+  padding: 12px;
+  overflow: auto;
+}
+
+/* Keep protocol/storage files out of the normal note-browsing experience. */
+.nav-folder-title[data-path=".obsreview"],
+.nav-folder-title[data-path^=".obsreview/"] {
+  display: none !important;
+}
+
+.obsreview-header,
+.obsreview-detail-toolbar,
+.obsreview-card-heading,
+.obsreview-metadata,
+.obsreview-tabs,
+.obsreview-review-actions,
+.obsreview-final-actions,
+.obsreview-conflict-actions,
+.obsreview-hunk-header,
+.obsreview-modal-actions,
+.obsreview-diff-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obsreview-header h2,
+.obsreview-detail-toolbar h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.obsreview-tabs {
+  margin: 12px 0;
+}
+
+.obsreview-tabs button.is-active,
+.obsreview-review-actions button.is-active,
+.obsreview-file-list button.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.obsreview-list,
+.obsreview-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.obsreview-card {
+  border: 1px solid var(--obsreview-border);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.obsreview-card:hover,
+.obsreview-card:focus {
+  border-color: var(--interactive-accent);
+}
+
+.obsreview-card-heading strong {
+  flex: 1;
+}
+
+.obsreview-card-target {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.obsreview-status,
+.obsreview-count,
+.obsreview-hunk-decision {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-modifier-hover);
+}
+
+.obsreview-status.is-conflicted,
+.obsreview-hunk-decision.is-rejected {
+  color: var(--text-error);
+}
+
+.obsreview-hunk-decision.is-accepted {
+  color: var(--text-success);
+}
+
+.obsreview-metadata {
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin: 8px 0 12px;
+}
+
+.obsreview-file-list {
+  margin: 10px 0;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.obsreview-file-list button {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.obsreview-conflict-warning {
+  border-left: 4px solid var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 10%, transparent);
+  padding: 8px 12px;
+  margin: 10px 0;
+}
+
+.obsreview-three-way {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.obsreview-three-way-panel {
+  min-width: 0;
+  border: 1px solid var(--obsreview-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.obsreview-three-way-panel h4 {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--background-secondary);
+}
+
+.obsreview-three-way-panel pre {
+  margin: 0;
+  padding: 8px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.obsreview-review-actions,
+.obsreview-final-actions,
+.obsreview-conflict-actions {
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.obsreview-diff-summary {
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.obsreview-hunk {
+  border: 1px solid var(--obsreview-border);
+  border-radius: 6px;
+  margin: 10px 0;
+  overflow: hidden;
+  scroll-margin: 80px;
+}
+
+.obsreview-hunk-header {
+  background: var(--background-secondary);
+  padding: 6px 8px;
+}
+
+.obsreview-hunk-header code {
+  flex: 1;
+}
+
+.obsreview-hunk-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.obsreview-diff {
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+  overflow-x: auto;
+}
+
+.obsreview-diff-line {
+  display: grid;
+  grid-template-columns: 3.5em 3.5em 1.5em minmax(max-content, 1fr);
+  min-height: 1.5em;
+}
+
+.obsreview-diff-line.is-add,
+.obsreview-split-cell.is-add {
+  background: var(--obsreview-added);
+}
+
+.obsreview-diff-line.is-remove,
+.obsreview-split-cell.is-remove {
+  background: var(--obsreview-removed);
+}
+
+.obsreview-line-number {
+  color: var(--text-faint);
+  text-align: right;
+  padding: 0 6px;
+  user-select: none;
+  border-right: 1px solid var(--obsreview-border);
+}
+
+.obsreview-diff-sign {
+  text-align: center;
+  user-select: none;
+}
+
+.obsreview-line-content {
+  white-space: pre;
+  padding: 0 6px;
+}
+
+.obsreview-inline.is-add,
+.obsreview-inline.is-remove {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+.obsreview-diff-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.obsreview-split-cell {
+  display: grid;
+  grid-template-columns: 3.5em minmax(max-content, 1fr);
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--obsreview-border) 40%, transparent);
+}
+
+.obsreview-split-cell.is-left {
+  border-right: 1px solid var(--obsreview-border);
+}
+
+.obsreview-split-cell.is-empty {
+  background: var(--background-secondary-alt);
+}
+
+.obsreview-proposal-editor {
+  min-height: 420px;
+  border: 1px solid var(--obsreview-border);
+}
+
+.obsreview-proposal-textarea {
+  width: 100%;
+  min-height: 420px;
+  resize: vertical;
+  border: 0;
+  font-family: var(--font-monospace);
+}
+
+.obsreview-modal-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.obsreview-error {
+  color: var(--text-error);
+}
+
+.obsreview-empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 18px;
+}
+
+@media (max-width: 900px) {
+  .obsreview-three-way {
+    grid-template-columns: 1fr;
+  }
+  .obsreview-diff-split {
+    grid-template-columns: 1fr;
+  }
+  .obsreview-split-cell.is-left {
+    border-right: 0;
+  }
+}
+
+/* Public CodeMirror 6 proposal editor. The review page remains the authority
+   for hunk decisions; these decorations are advisory visual context only. */
+.obsreview-cm6-host {
+  min-height: 420px;
+  background: var(--background-primary);
+}
+
+.obsreview-cm6-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 420px;
+}
+
+.obsreview-cm6-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.obsreview-cm6-pane + .obsreview-cm6-pane {
+  border-left: 1px solid var(--obsreview-border);
+}
+
+.obsreview-cm6-pane-title {
+  padding: 6px 10px;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--obsreview-border);
+}
+
+.obsreview-cm6-editor {
+  min-height: 390px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.obsreview-cm6-editor .cm-editor {
+  height: 100%;
+  min-height: 390px;
+}
+
+.obsreview-cm6-editor .cm-scroller {
+  overflow: auto;
+  font-family: var(--font-monospace);
+}
+
+.obsreview-cm6-editor .cm-content {
+  min-width: max-content;
+}
+
+.obsreview-cm-line-add {
+  background: var(--obsreview-added);
+}
+
+.obsreview-cm-line-remove {
+  background: var(--obsreview-removed);
+}
+
+.obsreview-cm-inline-add,
+.obsreview-cm-inline-remove {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+@media (max-width: 900px) {
+  .obsreview-cm6-split {
+    grid-template-columns: 1fr;
+  }
+
+  .obsreview-cm6-pane + .obsreview-cm6-pane {
+    border-left: 0;
+    border-top: 1px solid var(--obsreview-border);
+  }
+}

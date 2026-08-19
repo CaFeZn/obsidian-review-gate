@@ -1,0 +1,20 @@
+{
+  "agent": "codex",
+  "session": "framework-docs-42",
+  "changes": [
+    {
+      "operation": "modify",
+      "target": "Framework/CAN.md",
+      "file": "proposals/can.md"
+    },
+    {
+      "operation": "create",
+      "target": "Framework/SPI.md",
+      "file": "proposals/spi.md"
+    },
+    {
+      "operation": "delete",
+      "target": "Old/Deprecated.md"
+    }
+  ]
+}
