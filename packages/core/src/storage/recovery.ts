@@ -1,4 +1,4 @@
-import { readdir, rm } from "node:fs/promises";
+import { readdir, rm } from "./file-system";
 import path from "node:path";
 import { ReviewStore } from "./review-store";
 import { reviewLayout } from "./layout";

@@ -57,7 +57,8 @@ test("CLI submit/status/update/cancel use one-line machine JSON and stable exit 
     assert.equal(submit.document["status"], "pending");
     assert.equal(submit.stdout.split("\n").length, 1);
     assert.equal(await readVaultFile(vault, "Framework/CAN.md"), "base\n");
-    await assert.rejects(access(path.join(vault, ".obsreview")));
+    await access(path.join(vault, ".obsreview"));
+    await assert.rejects(access(path.join(reviewHome, "vaults")));
     const reviewId = submit.document["reviewId"];
     assert.equal(typeof reviewId, "string");
 

@@ -12,6 +12,18 @@ declare module "obsidian" {
 
   export interface DataAdapter {
     getBasePath?(): string;
+    exists(vaultPath: string): Promise<boolean>;
+    stat(vaultPath: string): Promise<{ type: "file" | "folder"; mtime: number } | null>;
+    list(vaultPath: string): Promise<{
+      files: string[];
+      folders: string[];
+    }>;
+    read(vaultPath: string): Promise<string>;
+    write(vaultPath: string, data: string): Promise<void>;
+    mkdir(vaultPath: string): Promise<void>;
+    rmdir(vaultPath: string, recursive: boolean): Promise<void>;
+    remove(vaultPath: string): Promise<void>;
+    rename(source: string, destination: string): Promise<void>;
   }
 
   export interface Vault {

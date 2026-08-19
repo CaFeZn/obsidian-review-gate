@@ -1,9 +1,4 @@
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { mkdir, readFile, rename, rm } from "../storage/file-system";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Review, ReviewChange, ReviewConflict } from "../model/review";

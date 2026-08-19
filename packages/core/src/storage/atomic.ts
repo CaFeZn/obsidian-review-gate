@@ -1,13 +1,15 @@
+import path from "node:path";
+import { randomBytes } from "node:crypto";
 import {
+  isFileSystemError,
   mkdir,
-  open,
   rename,
   rm,
   stat,
-  unlink,
-} from "node:fs/promises";
-import path from "node:path";
-import { randomBytes } from "node:crypto";
+  syncDirectory,
+  syncFile,
+  writeFile,
+} from "./file-system";
 
 export interface AtomicWriteOptions {
   readonly mode?: number;
@@ -16,18 +18,13 @@ export interface AtomicWriteOptions {
 
 export async function atomicWriteFile(
   destination: string,
-  data: string | Uint8Array,
+  data: string,
   options: AtomicWriteOptions = {},
 ): Promise<void> {
   await mkdir(path.dirname(destination), { recursive: true });
   const temporary = `${destination}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
-  const handle = await open(temporary, "wx", options.mode ?? 0o600);
-  try {
-    await handle.writeFile(data);
-    if (options.durable !== false) await handle.sync();
-  } finally {
-    await handle.close();
-  }
+  await writeFile(temporary, data, { exclusive: true, mode: options.mode ?? 0o600 });
+  if (options.durable !== false) await syncFile(temporary);
 
   try {
     await replacePath(temporary, destination);
@@ -56,7 +53,7 @@ export async function replacePath(source: string, destination: string): Promise<
   if (destinationExists) await rename(destination, backup);
   try {
     await rename(source, destination);
-    if (destinationExists) await unlink(backup).catch(() => undefined);
+    if (destinationExists) await rm(backup, { force: true }).catch(() => undefined);
   } catch (error) {
     if (destinationExists) {
       await rename(backup, destination).catch(() => undefined);
@@ -66,35 +63,16 @@ export async function replacePath(source: string, destination: string): Promise<
 }
 
 export async function fsyncDirectory(directory: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(directory, "r");
-    await handle.sync();
-  } catch {
-    // Windows and some virtual filesystems do not permit opening directories.
-    // File fsync + same-directory rename remains the strongest portable path.
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
+  await syncDirectory(directory);
 }
 
 export async function exists(value: string): Promise<boolean> {
-  try {
-    await stat(value);
-    return true;
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return false;
-    throw error;
-  }
+  return (await stat(value)) !== null;
 }
 
 function isReplaceRetryable(error: unknown): boolean {
   return (
-    isNodeError(error) &&
+    isFileSystemError(error) &&
     (error.code === "EEXIST" || error.code === "EPERM" || error.code === "EACCES")
   );
-}
-
-export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }

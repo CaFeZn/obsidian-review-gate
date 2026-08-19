@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 — 2026-08-19
+
+- Routed Obsidian plugin review and target I/O through the Vault `DataAdapter` for TSafe compatibility.
+- Restored the Vault-local `.obsreview` as the shared source of truth for CLI and plugin.
+- Replaced Node filesystem watching in the plugin with active-filesystem content fingerprint polling.
+- Added virtual-filesystem lifecycle and watcher regressions for DataAdapter-only access.
+
 ## 0.1.1 — 2026-08-19
 
 - Moved review protocol state to a per-vault directory under the operating system user-data root.

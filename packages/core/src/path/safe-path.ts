@@ -1,10 +1,6 @@
-import {
-  lstat,
-  realpath,
-  stat,
-} from "node:fs/promises";
 import path from "node:path";
 import { ReviewError } from "../model/errors";
+import { lstat, realpath, stat, type ReviewFileStat } from "../storage/file-system";
 
 export interface SafeTarget {
   readonly vaultRoot: string;
@@ -21,7 +17,7 @@ export async function resolveVaultRoot(vault: string): Promise<string> {
   try {
     root = await realpath(path.resolve(vault));
     const info = await stat(root);
-    if (!info.isDirectory()) {
+    if (info === null || !info.isDirectory()) {
       throw new ReviewError("INVALID_ARGUMENTS", "Vault path is not a directory.", {
         vault,
       });
@@ -160,13 +156,8 @@ async function nearestExistingAncestor(candidate: string, root: string): Promise
   }
 }
 
-async function lstatOrNull(value: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
-  try {
-    return await lstat(value);
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return null;
-    throw error;
-  }
+async function lstatOrNull(value: string): Promise<ReviewFileStat | null> {
+  return lstat(value);
 }
 
 function samePath(left: string, right: string): boolean {
@@ -177,8 +168,4 @@ function samePath(left: string, right: string): boolean {
 
 function invalidPath(input: string, message: string): ReviewError {
   return new ReviewError("INVALID_TARGET_PATH", message, { target: input });
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
