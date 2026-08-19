@@ -96,8 +96,7 @@ function smokePlugin(entry) {
 }
 
 function smokeCli(cli, temporary) {
-  const reviewHome = path.join(temporary, "review-home");
-  const versionResult = invokeCli(cli, ["--version", "--json"], reviewHome);
+  const versionResult = invokeCli(cli, ["--version", "--json"]);
   const versionDocument = parseJson(versionResult.stdout, "CLI version");
   if (versionDocument.ok !== true || versionDocument.version !== version) {
     throw new Error(`Unexpected extracted CLI version: ${versionResult.stdout}`);
@@ -121,7 +120,7 @@ function smokeCli(cli, temporary) {
     "--agent",
     "artifact-smoke",
     "--json",
-  ], reviewHome);
+  ]);
   const submit = parseJson(submitResult.stdout, "CLI submit");
   if (submit.ok !== true || submit.status !== "pending") {
     throw new Error(`Extracted CLI submit failed: ${submitResult.stdout}`);
@@ -129,8 +128,8 @@ function smokeCli(cli, temporary) {
   if (fs.readFileSync(target, "utf8") !== "# CAN\n\nBase\n") {
     throw new Error("Packaged pending submit mutated the target.");
   }
-  if (fs.existsSync(path.join(vault, ".obsreview"))) {
-    throw new Error("Packaged pending submit created review storage inside the vault.");
+  if (!fs.existsSync(path.join(vault, ".obsreview"))) {
+    throw new Error("Packaged pending submit did not create shared review storage inside the vault.");
   }
 
   const approveResult = invokeCli(cli, [
@@ -141,7 +140,7 @@ function smokeCli(cli, temporary) {
     "--actor",
     "artifact-smoke-human",
     "--json",
-  ], reviewHome);
+  ]);
   const approve = parseJson(approveResult.stdout, "CLI approve");
   if (approve.ok !== true || approve.status !== "approved") {
     throw new Error(`Extracted CLI approve failed: ${approveResult.stdout}`);
@@ -151,10 +150,9 @@ function smokeCli(cli, temporary) {
   }
 }
 
-function invokeCli(cli, arguments_, reviewHome) {
+function invokeCli(cli, arguments_) {
   const result = spawnSync(process.execPath, [cli, ...arguments_], {
     encoding: "utf8",
-    env: { ...process.env, OBSREVIEW_HOME: reviewHome },
   });
   if (result.status !== 0) {
     throw new Error(result.stderr || result.stdout || `CLI exited ${result.status}`);

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile } from "../storage/file-system";
 import type { Review, ReviewChange } from "../model/review";
 import { sha256 } from "../model/hash";
 import { resolveSafeTarget } from "../path/safe-path";

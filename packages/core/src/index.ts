@@ -14,6 +14,7 @@ export * from "./storage/review-store";
 export * from "./storage/recovery";
 export * from "./storage/lock";
 export * from "./storage/layout";
+export * from "./storage/file-system";
 export * from "./storage/user-data";
 export * from "./path/safe-path";
 export * from "./protocol/result";

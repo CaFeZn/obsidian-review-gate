@@ -1,21 +1,21 @@
-import { watch, type FSWatcher } from "node:fs";
-import { readdir } from "node:fs/promises";
 import path from "node:path";
+import {
+  isFileSystemError,
+  readFile,
+  readdir,
+  type ReviewDirectoryEntry,
+} from "../../../core/src/storage/file-system";
 import { reviewLayout } from "../../../core/src/storage/layout";
 
 export interface ReviewWatcherOptions {
   readonly debounceMs?: number;
+  readonly pollMs?: number;
 }
 
-/**
- * Watches pending proposal/meta files and history transitions. Recursive watch
- * is attempted on platforms that support it; a directory fan-out fallback is
- * used elsewhere. Atomic-save rename bursts are coalesced by one debounce.
- */
 export class ReviewWatcher {
-  private watchers: FSWatcher[] = [];
   private debounce: NodeJS.Timeout | null = null;
-  private rescan: NodeJS.Timeout | null = null;
+  private pollTimer: NodeJS.Timeout | null = null;
+  private fingerprint = "";
   private stopped = true;
 
   public constructor(
@@ -26,101 +26,97 @@ export class ReviewWatcher {
 
   public async start(): Promise<void> {
     this.stopped = false;
-    await this.rebuild();
+    this.fingerprint = await reviewFingerprint(this.storageBase);
+    this.schedulePoll();
   }
 
   public stop(): void {
     this.stopped = true;
     if (this.debounce !== null) clearTimeout(this.debounce);
-    if (this.rescan !== null) clearTimeout(this.rescan);
+    if (this.pollTimer !== null) clearTimeout(this.pollTimer);
     this.debounce = null;
-    this.rescan = null;
-    for (const watcher of this.watchers) watcher.close();
-    this.watchers = [];
+    this.pollTimer = null;
   }
 
-  private async rebuild(): Promise<void> {
+  private schedulePoll(): void {
     if (this.stopped) return;
-    for (const watcher of this.watchers) watcher.close();
-    this.watchers = [];
-    const layout = reviewLayout(this.storageBase);
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      void this.poll();
+    }, this.options.pollMs ?? 250);
+  }
 
+  private async poll(): Promise<void> {
     try {
-      const recursive = watch(
-        layout.root,
-        { recursive: true, persistent: false },
-        () => this.signalChange(true),
-      );
-      recursive.on("error", () => void this.fallbackRebuild());
-      this.watchers.push(recursive);
-      return;
-    } catch {
-      await this.installFallbackWatchers();
-    }
-  }
-
-  private async fallbackRebuild(): Promise<void> {
-    for (const watcher of this.watchers) watcher.close();
-    this.watchers = [];
-    await this.installFallbackWatchers();
-  }
-
-  private async installFallbackWatchers(): Promise<void> {
-    if (this.stopped) return;
-    const layout = reviewLayout(this.storageBase);
-    for (const root of [layout.pending, layout.history, layout.events]) {
-      this.watchDirectory(root, root === layout.pending);
-    }
-    for (const entry of await safeReadDirectories(layout.pending)) {
-      const reviewDirectory = path.join(layout.pending, entry);
-      this.watchDirectory(reviewDirectory, false);
-      const changesRoot = path.join(reviewDirectory, "changes");
-      this.watchDirectory(changesRoot, false);
-      for (const change of await safeReadDirectories(changesRoot)) {
-        this.watchDirectory(path.join(changesRoot, change), false);
+      if (this.stopped) return;
+      const next = await reviewFingerprint(this.storageBase);
+      if (next !== this.fingerprint) {
+        this.fingerprint = next;
+        this.signalChange();
       }
+    } finally {
+      this.schedulePoll();
     }
   }
 
-  private watchDirectory(directory: string, rescanOnChange: boolean): void {
-    try {
-      const watcher = watch(directory, { persistent: false }, () => {
-        this.signalChange(rescanOnChange);
-      });
-      watcher.on("error", () => this.scheduleRescan());
-      this.watchers.push(watcher);
-    } catch {
-      // A directory can disappear during pending -> history rename. Parent
-      // watchers schedule a complete fan-out rebuild.
-    }
-  }
-
-  private signalChange(needsRescan: boolean): void {
+  private signalChange(): void {
     if (this.stopped) return;
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => {
       this.debounce = null;
       void this.onChange();
     }, this.options.debounceMs ?? 150);
-    if (needsRescan) this.scheduleRescan();
-  }
-
-  private scheduleRescan(): void {
-    if (this.stopped) return;
-    if (this.rescan !== null) clearTimeout(this.rescan);
-    this.rescan = setTimeout(() => {
-      this.rescan = null;
-      void this.rebuild();
-    }, 250);
   }
 }
 
-async function safeReadDirectories(directory: string): Promise<readonly string[]> {
+async function reviewFingerprint(storageBase: string): Promise<string> {
+  const layout = reviewLayout(storageBase);
+  const snapshots = await Promise.all(
+    [layout.pending, layout.history, layout.events].map((root) =>
+      snapshotDirectory(root, root),
+    ),
+  );
+  return JSON.stringify(snapshots);
+}
+
+async function snapshotDirectory(
+  root: string,
+  directory: string,
+): Promise<readonly string[]> {
+  let entries: readonly ReviewDirectoryEntry[];
   try {
-    return (await readdir(directory, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
-  } catch {
-    return [];
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isFileSystemError(error) && error.code === "ENOENT") {
+      return [`missing:${relativePath(root, directory)}`];
+    }
+    throw error;
   }
+
+  const snapshot: string[] = [];
+  for (const entry of [...entries].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    const absolute = path.join(directory, entry.name);
+    const relative = relativePath(root, absolute);
+    if (entry.isDirectory()) {
+      snapshot.push(`directory:${relative}`);
+      snapshot.push(...(await snapshotDirectory(root, absolute)));
+      continue;
+    }
+    try {
+      snapshot.push(`file:${relative}:${await readFile(absolute, "utf8")}`);
+    } catch (error) {
+      if (isFileSystemError(error) && error.code === "ENOENT") {
+        snapshot.push(`missing:${relative}`);
+        continue;
+      }
+      throw error;
+    }
+  }
+  return snapshot;
+}
+
+function relativePath(root: string, value: string): string {
+  return path.relative(root, value).split(path.sep).join("/");
 }

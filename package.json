@@ -1,6 +1,6 @@
 {
   "name": "obsidian-review-gate",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Local approval gate between external agents and an Obsidian vault",
   "license": "MIT",

@@ -1,10 +1,4 @@
-import {
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm } from "./file-system";
 import path from "node:path";
 import type {
   HunkDecision,

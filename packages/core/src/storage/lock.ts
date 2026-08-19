@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "./file-system";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -47,8 +47,7 @@ export async function acquireDirectoryLock(
       };
       try {
         await writeFile(path.join(lockPath, "owner.json"), JSON.stringify(owner), {
-          encoding: "utf8",
-          flag: "wx",
+          exclusive: true,
           mode: 0o600,
         });
       } catch (error) {
@@ -110,7 +109,7 @@ async function lockIsStale(lockPath: string, staleMs: number): Promise<boolean> 
     // after the lock directory itself is old enough.
     try {
       const lockStat = await stat(lockPath);
-      return Date.now() - lockStat.mtimeMs > staleMs;
+      return lockStat !== null && Date.now() - lockStat.mtimeMs > staleMs;
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") return false;
       throw error;
