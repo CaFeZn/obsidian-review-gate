@@ -121,7 +121,7 @@ export function isFileSystemError(error: unknown): error is Error & { readonly c
   return error instanceof Error && "code" in error && typeof error.code === "string";
 }
 
-class NodeReviewFileSystem implements ReviewFileSystem {
+export class NodeReviewFileSystem implements ReviewFileSystem {
   public async realpath(value: string): Promise<string> {
     return nodeRealpath(value);
   }

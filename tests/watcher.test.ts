@@ -35,7 +35,7 @@ test("proposal watcher observes atomic external saves and service reconciles rev
       pendingReviewDirectory(vault, review.id),
       "changes",
       "0001",
-      "proposal.md",
+      "proposal.rgdata",
     );
     const temporary = `${proposalPath}.external-tmp`;
     await writeFile(temporary, "external proposal\n", "utf8");
@@ -122,7 +122,7 @@ class WatcherFileSystem implements ReviewFileSystem {
       changes,
       change,
     ]);
-    this.files = new Map([[path.join(change, "proposal.md"), "first\n"]]);
+    this.files = new Map([[path.join(change, "proposal.rgdata"), "first\n"]]);
   }
 
   public updateProposal(content: string): void {

@@ -61,7 +61,7 @@ test("review storage can live outside the vault while approval still writes the 
           pendingReviewDirectory(storageBase, review.id),
           "changes",
           "0001",
-          "proposal.md",
+          "proposal.rgdata",
         ),
         "utf8",
       ),
@@ -96,7 +96,7 @@ test("external proposal edit increments revision before an agent update", async 
       pendingReviewDirectory(vault, review.id),
       "changes",
       "0001",
-      "proposal.md",
+      "proposal.rgdata",
     );
     await writeFile(proposalPath, "human edit\n", "utf8");
     const reconciled = await service.get(review.id);
@@ -217,7 +217,7 @@ test("successful multi-file approve applies modify/create/delete and archives hi
     assert.equal(await readVaultFile(vault, "New.md"), "new\n");
     await assert.rejects(access(path.join(vault, "Old.md")));
     assert.equal(
-      await readFile(path.join(vault, ".obsreview", "trash", review.id, "Old.md"), "utf8"),
+      await readFile(trashTargetPath(vault, review.id, "Old.md"), "utf8"),
       "old\n",
     );
     await assert.rejects(access(pendingReviewDirectory(vault, review.id)));
@@ -402,7 +402,7 @@ test("corrupted metadata is rejected while crash-like temp files are ignored", a
       changes: [{ target: "note.md", proposalContent: "proposal\n" }],
     });
     const directory = pendingReviewDirectory(vault, review.id);
-    await writeFile(path.join(directory, "meta.json.tmp-crash"), "partial", "utf8");
+    await writeFile(path.join(directory, "meta.rgdata.tmp-crash"), "partial", "utf8");
     assert.equal((await service.get(review.id)).status, "pending");
     await writeFile(reviewMetaPath(directory), "{broken", "utf8");
     await assert.rejects(

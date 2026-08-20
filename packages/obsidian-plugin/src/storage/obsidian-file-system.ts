@@ -1,11 +1,12 @@
 import path from "node:path";
-import type {
-  ReviewDirectoryEntry,
-  ReviewFileStat,
-  ReviewFileSystem,
-  ReviewMkdirOptions,
-  ReviewRemoveOptions,
-  ReviewWriteOptions,
+import {
+  NodeReviewFileSystem,
+  type ReviewDirectoryEntry,
+  type ReviewFileStat,
+  type ReviewFileSystem,
+  type ReviewMkdirOptions,
+  type ReviewRemoveOptions,
+  type ReviewWriteOptions,
 } from "../../../core/src/storage/file-system";
 
 export interface ObsidianStat {
@@ -32,6 +33,7 @@ export interface ObsidianDataAdapter {
 
 export class ObsidianReviewFileSystem implements ReviewFileSystem {
   private readonly vaultRoot: string;
+  private readonly externalFileSystem = new NodeReviewFileSystem();
 
   public constructor(
     vaultRoot: string,
@@ -42,21 +44,25 @@ export class ObsidianReviewFileSystem implements ReviewFileSystem {
 
   public async realpath(value: string): Promise<string> {
     const absolute = path.resolve(value);
+    if (!this.isVaultPath(absolute)) return this.externalFileSystem.realpath(absolute);
     const info = await this.stat(absolute);
     if (info === null) throw new ObsidianFileSystemError("ENOENT", value);
     return absolute;
   }
 
   public async stat(value: string): Promise<ReviewFileStat | null> {
+    if (!this.isVaultPath(value)) return this.externalFileSystem.stat(value);
     const info = await this.adapter.stat(this.toVaultPath(value));
     return info === null ? null : new ObsidianFileStat(info);
   }
 
   public async lstat(value: string): Promise<ReviewFileStat | null> {
+    if (!this.isVaultPath(value)) return this.externalFileSystem.lstat(value);
     return this.stat(value);
   }
 
   public async readFile(value: string): Promise<string> {
+    if (!this.isVaultPath(value)) return this.externalFileSystem.readFile(value);
     return this.adapter.read(this.toVaultPath(value));
   }
 
@@ -65,6 +71,10 @@ export class ObsidianReviewFileSystem implements ReviewFileSystem {
     data: string,
     options: ReviewWriteOptions = {},
   ): Promise<void> {
+    if (!this.isVaultPath(value)) {
+      await this.externalFileSystem.writeFile(value, data, options);
+      return;
+    }
     const vaultPath = this.toVaultPath(value);
     if (options.exclusive === true && (await this.adapter.exists(vaultPath))) {
       throw new ObsidianFileSystemError("EEXIST", value);
@@ -76,6 +86,10 @@ export class ObsidianReviewFileSystem implements ReviewFileSystem {
     value: string,
     options: ReviewMkdirOptions = {},
   ): Promise<void> {
+    if (!this.isVaultPath(value)) {
+      await this.externalFileSystem.mkdir(value, options);
+      return;
+    }
     const vaultPath = this.toVaultPath(value);
     if (options.recursive !== true) {
       if (vaultPath.length === 0) throw new ObsidianFileSystemError("EEXIST", value);
@@ -101,6 +115,7 @@ export class ObsidianReviewFileSystem implements ReviewFileSystem {
   }
 
   public async readdir(value: string): Promise<readonly ReviewDirectoryEntry[]> {
+    if (!this.isVaultPath(value)) return this.externalFileSystem.readdir(value);
     const listed = await this.adapter.list(this.toVaultPath(value));
     return [
       ...listed.files.map(
@@ -113,16 +128,35 @@ export class ObsidianReviewFileSystem implements ReviewFileSystem {
   }
 
   public async rename(source: string, destination: string): Promise<void> {
-    await this.adapter.rename(
-      this.toVaultPath(source),
-      this.toVaultPath(destination),
-    );
+    const sourceInVault = this.isVaultPath(source);
+    const destinationInVault = this.isVaultPath(destination);
+    if (!sourceInVault && !destinationInVault) {
+      await this.externalFileSystem.rename(source, destination);
+      return;
+    }
+    if (sourceInVault && destinationInVault) {
+      await this.adapter.rename(
+        this.toVaultPath(source),
+        this.toVaultPath(destination),
+      );
+      return;
+    }
+
+    const sourceInfo = await this.stat(source);
+    if (sourceInfo === null) throw new ObsidianFileSystemError("ENOENT", source);
+    if (sourceInfo.isDirectory()) throw new ObsidianFileSystemError("EXDEV", source);
+    await this.writeFile(destination, await this.readFile(source), { exclusive: true });
+    await this.rm(source);
   }
 
   public async rm(
     value: string,
     options: ReviewRemoveOptions = {},
   ): Promise<void> {
+    if (!this.isVaultPath(value)) {
+      await this.externalFileSystem.rm(value, options);
+      return;
+    }
     const vaultPath = this.toVaultPath(value);
     const info = await this.adapter.stat(vaultPath);
     if (info === null) {
@@ -136,17 +170,26 @@ export class ObsidianReviewFileSystem implements ReviewFileSystem {
     }
   }
 
-  public async syncFile(_value: string): Promise<void> {}
+  public async syncFile(value: string): Promise<void> {
+    if (!this.isVaultPath(value)) await this.externalFileSystem.syncFile(value);
+  }
 
-  public async syncDirectory(_value: string): Promise<void> {}
+  public async syncDirectory(value: string): Promise<void> {
+    if (!this.isVaultPath(value)) await this.externalFileSystem.syncDirectory(value);
+  }
+
+  private isVaultPath(value: string): boolean {
+    const relative = path.relative(this.vaultRoot, path.resolve(value));
+    return (
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative)
+    );
+  }
 
   private toVaultPath(value: string): string {
     const relative = path.relative(this.vaultRoot, path.resolve(value));
-    if (
-      relative === ".." ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
+    if (!this.isVaultPath(value)) {
       throw new ObsidianFileSystemError("EACCES", value);
     }
     return relative.split(path.sep).join("/");

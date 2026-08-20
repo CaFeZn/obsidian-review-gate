@@ -22,7 +22,7 @@ Vault
 
 ## 当前版本
 
-- 版本：`0.1.2`
+- 版本：`0.1.3`
 - Obsidian：桌面版，`1.5.0+`
 - CLI：Node.js `20+`
 - 状态：可通过 GitHub Release / BRAT 安装的公开第一版
@@ -74,7 +74,7 @@ Vault
 1. 在 Obsidian 的第三方插件市场安装并启用 **BRAT**；
 2. 执行命令 `BRAT: Add a beta plugin for testing`；
 3. 输入仓库地址 `https://github.com/CaFeZn/obsidian-review-gate`；
-4. 选择最新版本或固定版本 `0.1.2`；
+4. 选择最新版本或固定版本 `0.1.3`；
 5. 安装完成后启用 **Obsidian Review Gate**。
 
 BRAT 会从 GitHub Release 下载 `main.js`、`manifest.json` 和 `styles.css`。Release tag、Release name 与 `manifest.json` 中的版本必须一致。
@@ -148,13 +148,15 @@ $env:OBSREVIEW_VAULT = "D:\Notes"
 export OBSREVIEW_VAULT=/home/me/Notes
 ```
 
-Review 协议数据默认保存在目标 Vault 的隐藏目录：
+Review 协议数据默认保存在系统用户数据目录，并按 Vault 绝对路径哈希隔离：
 
 ```text
-<vault>\.obsreview\
+Windows: %LOCALAPPDATA%\ObsidianReviewGate\vaults\<vault-hash>\.obsreview\
+macOS:   ~/Library/Application Support/ObsidianReviewGate/vaults/<vault-hash>/.obsreview/
+Linux:  ${XDG_DATA_HOME:-~/.local/share}/obsidian-review-gate/vaults/<vault-hash>/.obsreview/
 ```
 
-CLI 通过 Node 文件系统访问该目录；插件通过 Obsidian `DataAdapter` 访问同一目录，避免在 TSafe 环境中绕过 Obsidian 的受信任读写路径。
+CLI 与插件都通过 Node 文件系统访问协议目录；插件仅通过 Obsidian `DataAdapter` 访问 Vault 内的正式 target。内部协议载荷统一使用 `.rgdata`，避免 TSafe 把 `.json/.md` 当作文档处理。
 
 ---
 
@@ -481,27 +483,27 @@ proposal = P
 Force Apply 必须显式确认。被覆盖的 current 内容会进入：
 
 ```text
-<vault>/.obsreview/trash/<review-id>/.../.backups/
+<review-storage>/.obsreview/trash/<review-id>/.../.backups/
 ```
 
 ---
 
 # 持久化布局
 
-每个 Vault 使用自己的隐藏目录，布局如下：
+每个 Vault 在系统用户数据目录中使用独立的隐藏协议目录，布局如下：
 
 ```text
-<vault>/.obsreview/
+<review-storage>/.obsreview/
 ├── pending/
 │   └── <review-id>/
-│       ├── meta.json
+│       ├── meta.rgdata
 │       └── changes/
 │           ├── 0001/
-│           │   ├── base.md
-│           │   └── proposal.md
+│           │   ├── base.rgdata
+│           │   └── proposal.rgdata
 │           └── 0002/
-│               ├── base.md
-│               └── proposal.md
+│               ├── base.rgdata
+│               └── proposal.rgdata
 ├── history/
 ├── state/
 │   ├── locks/
@@ -510,7 +512,7 @@ Force Apply 必须显式确认。被覆盖的 current 内容会进入：
 └── trash/
 ```
 
-CLI 与插件共享这一个持久化事实源。插件的全部协议与 target I/O 都通过 Obsidian `DataAdapter` 完成；pending review 不会改动正式 target，只有 Approve 会写入正式文件。
+CLI 与插件共享这一个持久化事实源。插件把外部协议 I/O 路由到 Node 文件系统，把 Vault target I/O 路由到 Obsidian `DataAdapter`；pending review 不会改动正式 target，只有 Approve 会写入正式文件。
 
 Metadata 使用 temp + rename 的安全更新方式，Node 文件系统额外执行 fsync。proposal 外部原子保存会被内容指纹 watcher 或下一次读取 reconcile 到 metadata，并递增 revision。
 

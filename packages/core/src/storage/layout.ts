@@ -35,7 +35,7 @@ export function historyReviewDirectory(storageBase: string, reviewId: string): s
 }
 
 export function reviewMetaPath(reviewDirectory: string): string {
-  return path.join(reviewDirectory, "meta.json");
+  return path.join(reviewDirectory, "meta.rgdata");
 }
 
 export function changeDirectory(reviewDirectory: string, changeId: string): string {
@@ -43,7 +43,7 @@ export function changeDirectory(reviewDirectory: string, changeId: string): stri
 }
 
 export function eventPath(storageBase: string, reviewId: string): string {
-  return path.join(reviewLayout(storageBase).events, `${safeReviewId(reviewId)}.json`);
+  return path.join(reviewLayout(storageBase).events, `${safeReviewId(reviewId)}.rgdata`);
 }
 
 export function lockDirectory(storageBase: string, reviewId: string): string {
@@ -60,10 +60,14 @@ export function trashTargetPath(
   target: string,
 ): string {
   const normalized = normalizeVaultRelativeTarget(target);
+  const segments = normalized.split("/");
+  const filename = segments.pop();
+  if (filename === undefined) throw new Error(`Invalid trash target: ${target}`);
   return path.join(
     reviewLayout(storageBase).trash,
     safeReviewId(reviewId),
-    ...normalized.split("/"),
+    ...segments,
+    `${filename}.rgdata`,
   );
 }
 

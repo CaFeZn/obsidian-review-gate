@@ -1,7 +1,7 @@
 # Obsidian Review Gate — Architecture and Phase 0 Research
 
 文档日期：2026-08-19<br>
-版本：0.1.1
+版本：0.1.3
 
 ## 1. 目标与非目标
 
@@ -161,8 +161,8 @@ Rebase
 这些操作只改变：
 
 ```text
-<review-storage>/.obsreview/pending/<id>/changes/<change-id>/proposal.md
-meta.json revision/hash/decisions
+<review-storage>/.obsreview/pending/<id>/changes/<change-id>/proposal.rgdata
+meta.rgdata revision/hash/decisions
 ```
 
 不允许写 target。
@@ -236,12 +236,12 @@ Approve 不信任 watcher 的“未发现冲突”结论。
 
 ```text
 <review-storage>/.obsreview/state/locks/<review-id>.lock/
-└── owner.json
+└── owner.rgdata
 ```
 
 锁包含 pid、hostname、token、createdAt。stale lock 只在超过阈值或本机进程确实不存在时回收。
 
-特别处理 `mkdir(lock)` 与 `owner.json` 写入之间的 acquisition window：竞争者看到暂时缺少 owner 文件时，不能立即删除活锁。该问题有专门并发测试。
+特别处理 `mkdir(lock)` 与 `owner.rgdata` 写入之间的 acquisition window：竞争者看到暂时缺少 owner 文件时，不能立即删除活锁。该问题有专门并发测试。
 
 所有 proposal/status mutation 支持 `expectedRevision`，防止：
 
@@ -348,7 +348,7 @@ Base / Current / Proposal
 Delete 不永久销毁：target 被移动到：
 
 ```text
-<review-storage>/.obsreview/trash/<review-id>/<target>
+<review-storage>/.obsreview/trash/<review-id>/<target>.rgdata
 ```
 
 Approved/rejected/cancelled Review 移入 history，保留：

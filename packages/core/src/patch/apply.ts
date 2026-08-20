@@ -559,7 +559,7 @@ export async function writeJournal(
   journal: TransactionJournal,
 ): Promise<void> {
   await atomicWriteFile(
-    path.join(transactionDirectoryPath, "journal.json"),
+    path.join(transactionDirectoryPath, "journal.rgdata"),
     `${JSON.stringify(journal, null, 2)}\n`,
   );
 }
@@ -570,7 +570,7 @@ export async function readJournal(
   storageBase: string = vaultRoot,
 ): Promise<TransactionJournal> {
   const parsed: unknown = JSON.parse(
-    await readFile(path.join(transactionDirectoryPath, "journal.json"), "utf8"),
+    await readFile(path.join(transactionDirectoryPath, "journal.rgdata"), "utf8"),
   );
   if (!isTransactionJournal(parsed)) {
     throw new ReviewError(

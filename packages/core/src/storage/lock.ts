@@ -46,7 +46,7 @@ export async function acquireDirectoryLock(
         createdAt: new Date().toISOString(),
       };
       try {
-        await writeFile(path.join(lockPath, "owner.json"), JSON.stringify(owner), {
+        await writeFile(path.join(lockPath, "owner.rgdata"), JSON.stringify(owner), {
           exclusive: true,
           mode: 0o600,
         });
@@ -102,7 +102,7 @@ export async function withDirectoryLock<T>(
 async function lockIsStale(lockPath: string, staleMs: number): Promise<boolean> {
   const owner = await readOwner(lockPath);
   if (owner === null) {
-    // mkdir() and owner.json creation are two filesystem operations. A competing
+    // mkdir() and owner.rgdata creation are two filesystem operations. A competing
     // process can observe the directory in that tiny window. Treating a missing
     // owner file as immediately stale lets the competitor delete a live lock and
     // defeats revision-based concurrency control. Only reclaim an ownerless lock
@@ -129,7 +129,7 @@ async function lockIsStale(lockPath: string, staleMs: number): Promise<boolean> 
 async function readOwner(lockPath: string): Promise<LockOwner | null> {
   try {
     const parsed: unknown = JSON.parse(
-      await readFile(path.join(lockPath, "owner.json"), "utf8"),
+      await readFile(path.join(lockPath, "owner.rgdata"), "utf8"),
     );
     if (!isLockOwner(parsed)) return null;
     return parsed;

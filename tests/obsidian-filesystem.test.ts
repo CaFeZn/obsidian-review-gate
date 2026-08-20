@@ -11,7 +11,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { ReviewService, installReviewFileSystem } from "../packages/core/src/index";
+import {
+  ReviewService,
+  installReviewFileSystem,
+  reviewLayout,
+} from "../packages/core/src/index";
 import {
   ObsidianReviewFileSystem,
   type ObsidianDataAdapter,
@@ -48,6 +52,52 @@ test("Obsidian filesystem completes a review using only vault-relative adapter p
     await cleanupVault(vault);
   }
 });
+
+test("Obsidian filesystem keeps TSafe-filtered review protocol outside the vault", async () => {
+  const vault = await createVault();
+  const storageBase = await createVault();
+  await writeVaultFile(vault, "note.md", "base\n");
+  const adapter = new RecordingDataAdapter(vault);
+  const restore = installReviewFileSystem(new ObsidianReviewFileSystem(vault, adapter));
+
+  try {
+    const service = (await ReviewService.open(vault, { storageBase })).service;
+    const review = await service.submit({
+      changes: [{ target: "note.md", proposalContent: "proposal\n" }],
+    });
+
+    assert.deepEqual((await service.list()).map((item) => item.id), [review.id]);
+    assert.ok(adapter.paths.includes("note.md"));
+    assert.ok(adapter.paths.every((value) => !value.startsWith(".obsreview/")));
+    assert.deepEqual(
+      await listFiles(reviewLayout(storageBase).root),
+      [
+        `pending/${review.id}/changes/0001/base.rgdata`,
+        `pending/${review.id}/changes/0001/proposal.rgdata`,
+        `pending/${review.id}/meta.rgdata`,
+        `state/events/${review.id}.rgdata`,
+      ],
+    );
+    assert.equal(await readFile(path.join(vault, "note.md"), "utf8"), "base\n");
+    await service.approve(review.id);
+    assert.equal(await readFile(path.join(vault, "note.md"), "utf8"), "proposal\n");
+    assert.equal((await service.get(review.id)).status, "approved");
+  } finally {
+    restore();
+    await cleanupVault(storageBase);
+    await cleanupVault(vault);
+  }
+});
+
+async function listFiles(root: string, directory: string = root): Promise<readonly string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...(await listFiles(root, absolute)));
+    else files.push(path.relative(root, absolute).split(path.sep).join("/"));
+  }
+  return files.sort((left, right) => left.localeCompare(right));
+}
 
 class RecordingDataAdapter implements ObsidianDataAdapter {
   public readonly paths: string[] = [];

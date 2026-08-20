@@ -258,9 +258,9 @@ export class ReviewStore {
       const directoryForChange = changeDirectory(directory, change.id);
       await mkdir(directoryForChange, { recursive: true });
       const baseFile =
-        change.baseContent === null ? null : `changes/${change.id}/base.md`;
+        change.baseContent === null ? null : `changes/${change.id}/base.rgdata`;
       const proposalFile =
-        change.proposalContent === null ? null : `changes/${change.id}/proposal.md`;
+        change.proposalContent === null ? null : `changes/${change.id}/proposal.rgdata`;
       const baseContent = change.baseContent;
       if (baseFile !== null && baseContent !== null) {
         await atomicWriteFile(path.join(directory, ...baseFile.split("/")), baseContent);
@@ -351,7 +351,7 @@ async function readReviewContent(
   relative: string,
   reviewId: string,
 ): Promise<string> {
-  if (!/^changes\/\d{4}\/(?:base|proposal)\.md$/u.test(relative)) {
+  if (!/^changes\/\d{4}\/(?:base|proposal)\.rgdata$/u.test(relative)) {
     throw new ReviewError(
       "CORRUPTED_REVIEW",
       `Unsafe content path in review ${reviewId}.`,

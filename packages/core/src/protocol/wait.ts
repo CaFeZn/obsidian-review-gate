@@ -58,8 +58,8 @@ export async function waitForReview(
         const name = filename.toString();
         const relevant =
           name.includes(reviewId) ||
-          name === "meta.json" ||
-          name.endsWith(".json");
+          name === "meta.rgdata" ||
+          name.endsWith(".rgdata");
         if (!relevant) return;
       }
       if (debounce !== undefined) clearTimeout(debounce);

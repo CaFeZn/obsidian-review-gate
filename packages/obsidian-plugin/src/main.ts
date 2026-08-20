@@ -1,6 +1,7 @@
 import { Notice, Plugin, type TAbstractFile, type WorkspaceLeaf } from "obsidian";
 import { ReviewService } from "../../core/src/service/review-service";
 import { installReviewFileSystem } from "../../core/src/storage/file-system";
+import { userDataReviewStorageBase } from "../../core/src/storage/user-data";
 import { ObsidianReviewFileSystem } from "./storage/obsidian-file-system";
 import { ReviewWatcher } from "./watcher/review-watcher";
 import { ReviewGateView, REVIEW_GATE_VIEW_TYPE } from "./ui/review-view";
@@ -17,11 +18,12 @@ export default class ObsidianReviewGatePlugin extends Plugin {
       return;
     }
     const vaultRoot = getBasePath.call(this.app.vault.adapter);
+    const storageBase = userDataReviewStorageBase(vaultRoot);
     const restoreFileSystem = installReviewFileSystem(
       new ObsidianReviewFileSystem(vaultRoot, this.app.vault.adapter),
     );
     this.register(restoreFileSystem);
-    const opened = await ReviewService.open(vaultRoot);
+    const opened = await ReviewService.open(vaultRoot, { storageBase });
     this.service = opened.service;
 
     this.registerView(
@@ -40,7 +42,7 @@ export default class ObsidianReviewGatePlugin extends Plugin {
       callback: () => void this.refreshViews(),
     });
 
-    this.watcher = new ReviewWatcher(vaultRoot, async () => {
+    this.watcher = new ReviewWatcher(storageBase, async () => {
       await this.refreshViews();
     });
     await this.watcher.start();

@@ -8,11 +8,12 @@ const { spawnSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const cli = path.join(root, "release", "obsreview-cli", "obsreview.js");
 if (!fs.existsSync(cli)) throw new Error("Standalone CLI release is missing. Run npm run build first.");
+const reviewHome = fs.mkdtempSync(path.join(os.tmpdir(), "obsreview-release-home-"));
 
 const version = invoke(["--version", "--json"]);
 if (version.status !== 0) throw new Error(version.stderr || version.stdout);
 const versionDocument = JSON.parse(version.stdout);
-if (versionDocument.ok !== true || versionDocument.version !== "0.1.2") {
+if (versionDocument.ok !== true || versionDocument.version !== "0.1.3") {
   throw new Error(`Unexpected standalone CLI version output: ${version.stdout}`);
 }
 
@@ -44,8 +45,11 @@ try {
   if (fs.readFileSync(target, "utf8") !== "# CAN\n\nBase\n") {
     throw new Error("Standalone pending submit mutated target.");
   }
-  if (!fs.existsSync(path.join(vault, ".obsreview"))) {
-    throw new Error("Standalone pending submit did not create shared review storage inside the vault.");
+  if (fs.existsSync(path.join(vault, ".obsreview"))) {
+    throw new Error("Standalone pending submit created review storage inside the vault.");
+  }
+  if (!fs.existsSync(path.join(reviewHome, "vaults"))) {
+    throw new Error("Standalone pending submit did not create external review storage.");
   }
 
   const approve = invoke([
@@ -61,11 +65,13 @@ try {
   }
   console.log(`Standalone release CLI smoke passed: ${document.reviewId}`);
 } finally {
+  fs.rmSync(reviewHome, { recursive: true, force: true });
   fs.rmSync(vault, { recursive: true, force: true });
 }
 
 function invoke(arguments_) {
   return spawnSync(process.execPath, [cli, ...arguments_], {
     encoding: "utf8",
+    env: { ...process.env, OBSREVIEW_HOME: reviewHome },
   });
 }
