@@ -44,9 +44,16 @@ try {
     fs.copyFileSync(filename, path.join(directory, path.basename(filename)));
   }
   fs.copyFileSync(checksums, path.join(directory, path.basename(checksums)));
-  fs.copyFileSync(
-    path.join(root, "docs", "test-results.md"),
+  fs.writeFileSync(
     path.join(directory, "TEST-RESULTS.md"),
+    [
+      "# Test Results",
+      "",
+      `Obsidian Review Gate ${version}`,
+      "",
+      "Generated only after `npm run package` completed typecheck, source policy, the complete Node test suite, build, CLI smoke, plugin-load smoke, release smoke, artifact extraction smoke, and delivery archive validation.",
+      "",
+    ].join("\n"),
   );
   fs.writeFileSync(
     path.join(directory, "DELIVERY-README.txt"),

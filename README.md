@@ -22,11 +22,11 @@ Vault
 
 ## 当前版本
 
-- 版本：`0.1.3`
+- 版本：`0.1.4`
 - Obsidian：桌面版，`1.5.0+`
 - CLI：Node.js `20+`
 - 状态：可通过 GitHub Release / BRAT 安装的公开第一版
-- 测试：35 项自动测试、CLI 端到端 smoke、插件单文件加载 smoke、独立发布包解压验收
+- 测试：92 项自动测试、CLI 端到端 smoke、插件单文件加载 smoke、独立发布包解压验收
 
 ## 已实现能力
 
@@ -34,6 +34,8 @@ Vault
 |---|---:|---|
 | Diff UI | ✅ | Unified / Split、行级与 inline 高亮 |
 | Hunk accept / reject | ✅ | 操作 proposal，不触碰 target |
+| 原生双栏审阅 | ✅ | 当前 Obsidian 窗口中的相邻标签组，不新建系统窗口 |
+| Review 合并式追加 | ✅ | `append` 复用同一 target 的原 Review，非重叠修改自动三方合并 |
 | CLI ↔ Obsidian | ✅ | Vault 外共享持久化目录 + filesystem watcher |
 | patch-before-write | ✅ | proposal 先进入系统用户数据目录中的 pending state |
 | pending → apply | ✅ | Approve 才进入事务式 apply |
@@ -74,7 +76,7 @@ Vault
 1. 在 Obsidian 的第三方插件市场安装并启用 **BRAT**；
 2. 执行命令 `BRAT: Add a beta plugin for testing`；
 3. 输入仓库地址 `https://github.com/CaFeZn/obsidian-review-gate`；
-4. 选择最新版本或固定版本 `0.1.3`；
+4. 选择最新版本或固定版本 `0.1.4`；
 5. 安装完成后启用 **Obsidian Review Gate**。
 
 BRAT 会从 GitHub Release 下载 `main.js`、`manifest.json` 和 `styles.css`。Release tag、Release name 与 `manifest.json` 中的版本必须一致。
@@ -196,6 +198,21 @@ obsreview submit `
 - `Framework/CAN.md` 仍是原内容；
 - base snapshot 和 proposal 位于 Vault 外的 review storage；
 - Obsidian Review Gate 自动显示该 Review。
+
+## Append To Existing Review
+
+当同一 target 已经存在 pending/conflicted Review，Agent 需要继续修改时使用：
+
+```powershell
+obsreview append `
+  --vault "D:\Notes" `
+  --target "Framework/CAN.md" `
+  --file "C:\Temp\can-newer.md" `
+  --agent "codex" `
+  --json
+```
+
+`append` 默认复用唯一匹配的原 `reviewId`，在最新 target 和最新 proposal 上三方合并非重叠修改；没有匹配 Review 时才新建。多个匹配或修改重叠时返回结构化错误，所有原 Review 保持不变。
 
 ## Wait
 
@@ -564,11 +581,11 @@ npm run check
 
 1. strict TypeScript typecheck；
 2. 源码策略检查；
-3. 34 项自动测试；
+3. 92 项自动测试；
 4. 构建；
 5. CLI 最小工作流；
 6. 插件单文件入口加载 smoke；
-7. 独立发布版 CLI 的 version / submit / approve smoke。
+7. 独立发布版 CLI 的 version / submit / append / approve smoke。
 
 源码策略检查会拒绝：
 
@@ -598,7 +615,7 @@ obsreview --version
 npm run package
 ```
 
-该命令会重新执行完整门禁，生成插件、便携 CLI、源码三个 ZIP，从 ZIP 解压后再次验证插件加载与 CLI `submit → approve` 工作流，并生成 SHA-256 校验文件及合集包。
+该命令会重新执行完整门禁，生成插件、便携 CLI、源码三个 ZIP，从 ZIP 解压后再次验证插件加载与 CLI `submit → append → approve` 工作流，并生成 SHA-256 校验文件及合集包。
 
 ---
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.4 — 2026-08-26
+
+- Opened native Markdown review panes as adjacent tab groups in the current Obsidian window instead of a separate operating-system window.
+- Added compact proposal-header controls for save, hunk navigation, accept/reject, approve, and reject; aligned unequal diff blocks with blank rows and improved CJK wrapping.
+- Recovered same-process lock residue and reported lock acquisition stages without weakening cross-process exclusion.
+- Fixed CLI approval when the Vault and external Review storage are on different Windows volumes by safely falling back from file rename to copy, sync, and source removal.
+- Added `obsreview append`, which merges non-overlapping Agent edits into the unique existing mutable Review and refuses ambiguous or overlapping updates without creating a duplicate Review.
+
+## 0.1.3 — 2026-08-20
+
+- Moved Review protocol state outside the Vault while keeping formal target writes inside Obsidian's `DataAdapter` boundary.
+- Switched protocol payloads to opaque `.rgdata` files so TSafe does not transform them as Vault documents.
+- Preserved pending Review visibility and approval behavior across the CLI and Obsidian plugin in TSafe-enabled Vaults.
+
 ## 0.1.2 — 2026-08-19
 
 - Routed Obsidian plugin review and target I/O through the Vault `DataAdapter` for TSafe compatibility.

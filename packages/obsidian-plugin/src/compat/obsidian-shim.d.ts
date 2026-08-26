@@ -1,11 +1,18 @@
 declare module "obsidian" {
+  export const getLanguage: (() => string) | undefined;
+  export function setIcon(parent: HTMLElement, iconId: string): void;
+
   export interface EventRef {}
 
   export class TAbstractFile {
+    vault: Vault;
     path: string;
+    name: string;
+    parent: TAbstractFile | null;
   }
 
   export class TFile extends TAbstractFile {
+    stat: { ctime: number; mtime: number; size: number };
     extension: string;
     basename: string;
   }
@@ -37,10 +44,17 @@ declare module "obsidian" {
     ): EventRef;
   }
 
+  export interface WorkspaceParent {}
+
   export interface Workspace {
     getLeavesOfType(type: string): WorkspaceLeaf[];
     getRightLeaf(create: boolean): WorkspaceLeaf | null;
-    getLeaf(newLeaf?: boolean): WorkspaceLeaf;
+    getLeaf(newLeaf: "tab"): WorkspaceLeaf;
+    createLeafBySplit(
+      leaf: WorkspaceLeaf,
+      direction: "vertical" | "horizontal",
+      before?: boolean,
+    ): WorkspaceLeaf;
     revealLeaf(leaf: WorkspaceLeaf): Promise<void>;
   }
 
@@ -49,10 +63,25 @@ declare module "obsidian" {
     workspace: Workspace;
   }
 
+  export interface ViewState {
+    type: string;
+    state?: Record<string, unknown>;
+    active?: boolean;
+  }
+
+  export interface ViewStateResult {
+    history: boolean;
+  }
+
   export class WorkspaceLeaf {
     view: unknown;
-    setViewState(state: { type: string; active?: boolean }): Promise<void>;
+    getContainer(): WorkspaceParent;
+    open(view: ItemView): Promise<ItemView>;
+    setViewState(state: ViewState): Promise<void>;
+    getViewState(): ViewState;
     openFile(file: TFile): Promise<void>;
+    updateHeader(): void;
+    detach(): void;
   }
 
   export abstract class ItemView {
@@ -60,12 +89,43 @@ declare module "obsidian" {
     readonly app: App;
     readonly containerEl: HTMLElement;
     readonly contentEl: HTMLElement;
+    navigation: boolean;
     constructor(leaf: WorkspaceLeaf);
     abstract getViewType(): string;
     abstract getDisplayText(): string;
     getIcon(): string;
+    getState(): Record<string, unknown>;
+    setState(state: unknown, result: ViewStateResult): Promise<void>;
+    addAction(icon: string, title: string, callback: (event: MouseEvent) => unknown): HTMLElement;
+    register(callback: () => unknown): void;
     onOpen(): Promise<void> | void;
     onClose(): Promise<void> | void;
+  }
+
+  export class MarkdownView extends ItemView {
+    allowNoFile: boolean;
+    file: TFile | null;
+    editor: Editor;
+    requestSave: () => void;
+    getViewType(): string;
+    getDisplayText(): string;
+    getViewData(): string;
+    setViewData(data: string, clear: boolean): void;
+    save(clear?: boolean): Promise<void>;
+    clear(): void;
+  }
+
+  export abstract class Editor {
+    abstract getLine(line: number): string;
+    abstract lastLine(): number;
+    abstract setValue(content: string): void;
+    abstract scrollIntoView(
+      range: {
+        from: { line: number; ch: number };
+        to: { line: number; ch: number };
+      },
+      center?: boolean,
+    ): void;
   }
 
   export interface Command {
@@ -78,6 +138,7 @@ declare module "obsidian" {
     readonly app: App;
     readonly manifest: { id: string; version: string };
     registerView(type: string, creator: (leaf: WorkspaceLeaf) => ItemView): void;
+    registerEditorExtension(extension: unknown): void;
     addRibbonIcon(icon: string, title: string, callback: () => unknown): HTMLElement;
     addCommand(command: Command): void;
     registerEvent(event: EventRef): void;

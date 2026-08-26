@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -19,6 +20,15 @@ function testZip(filename, cwd) {
   run("unzip", ["-t", filename], cwd);
 }
 
+function extractZip(filename, destination, cwd) {
+  fs.mkdirSync(destination, { recursive: true });
+  if (process.platform === "win32") {
+    run(windowsTar(), ["-x", "-f", filename, "-C", destination], cwd);
+    return;
+  }
+  run("unzip", ["-q", filename, "-d", destination], cwd);
+}
+
 function windowsTar() {
   const systemRoot = process.env.SystemRoot;
   if (systemRoot === undefined) {
@@ -36,4 +46,4 @@ function run(command, arguments_, cwd) {
   }
 }
 
-module.exports = { testZip, zipDirectory };
+module.exports = { extractZip, testZip, zipDirectory };

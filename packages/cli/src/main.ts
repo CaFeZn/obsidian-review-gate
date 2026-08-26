@@ -28,7 +28,7 @@ import {
   reviewDocument,
 } from "./output";
 
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 
 export async function run(argv: readonly string[]): Promise<number> {
   const jsonRequested = argv.includes("--json") || argv.some((item) => item.startsWith("--json="));
@@ -96,6 +96,8 @@ async function dispatch(
   switch (args.command) {
     case "submit":
       return submitCommand(service, args);
+    case "append":
+      return appendCommand(service, args);
     case "update":
       return updateCommand(service, args);
     case "status":
@@ -183,6 +185,33 @@ async function submitCommand(
     };
   }
   const review = await service.submit(input);
+  return { document: reviewDocument(review), exitCode: EXIT.success };
+}
+
+async function appendCommand(
+  service: ReviewService,
+  args: ParsedArguments,
+): Promise<CommandResult> {
+  rejectUnknownFlags(args, ["vault", "target", "file", "agent", "session"]);
+  const target = requiredFlag(args, "target");
+  const filename = requiredFlag(args, "file");
+  const proposalContent = await readFile(filename, "utf8").catch((error: unknown) => {
+    throw new ReviewError(
+      "INVALID_ARGUMENTS",
+      `Proposal file cannot be read: ${filename}`,
+      { file: filename },
+      { cause: error },
+    );
+  });
+  const source: { agent?: string; session?: string } = {};
+  const agent = flag(args, "agent");
+  const session = flag(args, "session");
+  if (agent !== undefined) source.agent = agent;
+  if (session !== undefined) source.session = session;
+  const review = await service.append({
+    ...(Object.keys(source).length === 0 ? {} : { source }),
+    changes: [{ target, proposalContent }],
+  });
   return { document: reviewDocument(review), exitCode: EXIT.success };
 }
 
@@ -397,6 +426,7 @@ function usage(): string {
     `Usage:\n` +
     `  obsreview submit --vault <vault> --target <path> --file <proposal> [--agent <name>] [--json]\n` +
     `  obsreview submit --vault <vault> --manifest <review.json> [--json]\n` +
+    `  obsreview append --vault <vault> --target <path> --file <proposal> [--agent <name>] [--json]\n` +
     `  obsreview update <review-id> --vault <vault> --change <id> --file <proposal> [--expected-revision <n>]\n` +
     `  obsreview status <review-id> --vault <vault> [--json]\n` +
     `  obsreview show <review-id> --vault <vault> [--conflict-context] [--json]\n` +

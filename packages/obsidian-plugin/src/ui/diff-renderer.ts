@@ -4,6 +4,12 @@ import type {
   InlineFragment,
 } from "../../../core/src/diff/types";
 import { stripLineEnding } from "../../../core/src/diff/text-lines";
+import { t } from "../i18n";
+import {
+  findCjkWrapRanges,
+  type TextRange,
+} from "../text/cjk-wrap-ranges";
+import { renderCjkWrappedText } from "./cjk-wrap-renderer";
 
 export type DiffMode = "unified" | "split";
 
@@ -14,32 +20,58 @@ export interface HunkCallbacks {
   readonly readOnly?: boolean;
 }
 
-export function renderHunk(
-  parent: HTMLElement,
-  hunk: DiffHunk,
-  mode: DiffMode,
-  callbacks: HunkCallbacks,
-): HTMLElement {
-  const section = parent.createDiv({ cls: "obsreview-hunk" });
-  section.id = `obsreview-hunk-${hunk.id}`;
+export interface RenderHunkRequest {
+  readonly parent: HTMLElement;
+  readonly hunk: DiffHunk;
+  readonly mode: DiffMode;
+  readonly callbacks: HunkCallbacks;
+}
+
+interface HunkButtonRequest {
+  readonly parent: HTMLElement;
+  readonly label: string;
+  readonly className: string;
+  readonly action: () => void | Promise<void> | undefined;
+}
+
+export function renderHunk(request: RenderHunkRequest): HTMLElement {
+  const section = request.parent.createDiv({ cls: "obsreview-hunk" });
+  section.id = `obsreview-hunk-${request.hunk.id}`;
   const header = section.createDiv({ cls: "obsreview-hunk-header" });
   header.createEl("code", {
-    text: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
+    text: `@@ -${request.hunk.oldStart},${request.hunk.oldLines} +${request.hunk.newStart},${request.hunk.newLines} @@`,
   });
-  if (callbacks.decision !== undefined) {
+  if (request.callbacks.decision !== undefined) {
     header.createSpan({
-      cls: `obsreview-hunk-decision is-${callbacks.decision}`,
-      text: callbacks.decision,
+      cls: `obsreview-hunk-decision is-${request.callbacks.decision}`,
+      text:
+        request.callbacks.decision === "accepted"
+          ? t("decisionAccepted")
+          : t("decisionRejected"),
     });
   }
-  if (callbacks.readOnly !== true && callbacks.onAccept !== undefined && callbacks.onReject !== undefined) {
+  if (
+    request.callbacks.readOnly !== true &&
+    request.callbacks.onAccept !== undefined &&
+    request.callbacks.onReject !== undefined
+  ) {
     const actions = header.createDiv({ cls: "obsreview-hunk-actions" });
-    addButton(actions, "Accept hunk", "obsreview-accept", () => callbacks.onAccept?.(hunk));
-    addButton(actions, "Reject hunk", "obsreview-reject", () => callbacks.onReject?.(hunk));
+    addButton({
+      parent: actions,
+      label: t("acceptHunk"),
+      className: "obsreview-accept",
+      action: () => request.callbacks.onAccept?.(request.hunk),
+    });
+    addButton({
+      parent: actions,
+      label: t("rejectHunk"),
+      className: "obsreview-reject",
+      action: () => request.callbacks.onReject?.(request.hunk),
+    });
   }
 
-  if (mode === "split") renderSplit(section, hunk.lines);
-  else renderUnified(section, hunk.lines);
+  if (request.mode === "split") renderSplit(section, request.hunk.lines);
+  else renderUnified(section, request.hunk.lines);
   return section;
 }
 
@@ -131,27 +163,50 @@ function renderLineContent(
             ? line.newInline
             : undefined;
   if (fragments === undefined) {
-    parent.textContent = stripLineEnding(line.content) || " ";
+    renderCjkWrappedText(parent, stripLineEnding(line.content) || " ");
     return;
   }
   renderFragments(parent, fragments);
 }
 
 function renderFragments(parent: HTMLElement, fragments: readonly InlineFragment[]): void {
+  const text = fragments.map((fragment) => fragment.text).join("");
+  let cursor = 0;
+  for (const range of findCjkWrapRanges(text)) {
+    renderFragmentSlice(parent, fragments, { from: cursor, to: range.from });
+    const wrapper = parent.createSpan({ cls: "obsreview-cjk-wrap" });
+    renderFragmentSlice(wrapper, fragments, range);
+    cursor = range.to;
+  }
+  renderFragmentSlice(parent, fragments, { from: cursor, to: text.length });
+}
+
+function renderFragmentSlice(
+  parent: HTMLElement,
+  fragments: readonly InlineFragment[],
+  range: TextRange,
+): void {
+  let offset = 0;
   for (const fragment of fragments) {
+    const fragmentEnd = offset + fragment.text.length;
+    const sliceStart = Math.max(range.from, offset);
+    const sliceEnd = Math.min(range.to, fragmentEnd);
+    if (sliceEnd <= sliceStart) {
+      offset = fragmentEnd;
+      continue;
+    }
     parent.createSpan({
       cls: `obsreview-inline is-${fragment.kind}`,
-      text: fragment.text,
+      text: fragment.text.slice(sliceStart - offset, sliceEnd - offset),
     });
+    offset = fragmentEnd;
   }
 }
 
-function addButton(
-  parent: HTMLElement,
-  label: string,
-  className: string,
-  action: () => void | Promise<void> | undefined,
-): void {
-  const button = parent.createEl("button", { text: label, cls: className });
-  button.addEventListener("click", () => void action());
+function addButton(request: HunkButtonRequest): void {
+  const button = request.parent.createEl("button", {
+    text: request.label,
+    cls: request.className,
+  });
+  button.addEventListener("click", () => void request.action());
 }

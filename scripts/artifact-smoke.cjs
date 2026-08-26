@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { extractZip, testZip } = require("./archive.cjs");
 
 const root = path.resolve(__dirname, "..");
 const parent = path.dirname(root);
@@ -21,13 +22,13 @@ for (const filename of Object.values(archives)) {
   if (!fs.existsSync(filename)) {
     throw new Error(`Expected package is missing: ${filename}`);
   }
-  run("unzip", ["-t", filename]);
+  testZip(filename, root);
 }
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "obsreview-artifact-smoke-"));
 try {
-  run("unzip", ["-q", archives.plugin, "-d", path.join(temporary, "plugin")]);
-  run("unzip", ["-q", archives.cli, "-d", path.join(temporary, "cli")]);
+  extractZip(archives.plugin, path.join(temporary, "plugin"), root);
+  extractZip(archives.cli, path.join(temporary, "cli"), root);
 
   smokePlugin(
     path.join(
@@ -51,10 +52,14 @@ function smokePlugin(entry) {
   if (/\brequire\((["'])\.{1,2}[\\/]/u.test(source)) {
     throw new Error("Extracted plugin contains a relative require call.");
   }
+  if (/\bimport\(\s*(["'])@codemirror\/(?:state|view)\1\s*\)/u.test(source)) {
+    throw new Error("Extracted plugin contains an unresolved dynamic CodeMirror import.");
+  }
 
   class StubPlugin {}
   class StubItemView {}
   class StubModal {}
+  class StubMarkdownView {}
   class StubNotice {}
   class StubWorkspaceLeaf {}
 
@@ -65,6 +70,7 @@ function smokePlugin(entry) {
         Plugin: StubPlugin,
         ItemView: StubItemView,
         Modal: StubModal,
+        MarkdownView: StubMarkdownView,
         Notice: StubNotice,
         WorkspaceLeaf: StubWorkspaceLeaf,
       };
@@ -170,14 +176,5 @@ function parseJson(text, label) {
     return JSON.parse(text);
   } catch (error) {
     throw new Error(`${label} did not return JSON: ${text}`, { cause: error });
-  }
-}
-
-function run(command, arguments_) {
-  const result = spawnSync(command, arguments_, { encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${arguments_.join(" ")} failed: ${result.stderr || result.stdout}`,
-    );
   }
 }

@@ -12,6 +12,7 @@ if (!fs.existsSync(entry)) {
 class StubPlugin {}
 class StubItemView {}
 class StubModal {}
+class StubMarkdownView {}
 class StubNotice {}
 class StubWorkspaceLeaf {}
 
@@ -22,12 +23,8 @@ const source = fs.readFileSync(entry, "utf8");
 if (/\brequire\((["'])\.{1,2}[\\/]/u.test(source)) {
   throw new Error("Plugin release still contains a relative require call.");
 }
-for (const request of ["@codemirror/state", "@codemirror/view"]) {
-  const doubleQuoted = `require("${request}")`;
-  const singleQuoted = `require('${request}')`;
-  if (!source.includes(doubleQuoted) && !source.includes(singleQuoted)) {
-    throw new Error(`Plugin release lost its Obsidian-provided ${request} external.`);
-  }
+if (/\bimport\(\s*(["'])@codemirror\/(?:state|view)\1\s*\)/u.test(source)) {
+  throw new Error("Plugin release still contains an unresolved dynamic CodeMirror import.");
 }
 const pluginModule = { exports: {} };
 const externalRequire = (request) => {
@@ -36,6 +33,7 @@ const externalRequire = (request) => {
       Plugin: StubPlugin,
       ItemView: StubItemView,
       Modal: StubModal,
+      MarkdownView: StubMarkdownView,
       Notice: StubNotice,
       WorkspaceLeaf: StubWorkspaceLeaf,
     };

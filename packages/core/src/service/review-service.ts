@@ -1,4 +1,5 @@
 import { readFile } from "../storage/file-system";
+import path from "node:path";
 import type {
   HunkDecisionKind,
   Review,
@@ -22,7 +23,7 @@ import {
 import { rebaseChange } from "../conflict/rebase";
 import { resolveSafeTarget, resolveVaultRoot } from "../path/safe-path";
 import { ReviewStore, type ListReviewsOptions } from "../storage/review-store";
-import { lockDirectory } from "../storage/layout";
+import { lockDirectory, reviewLayout } from "../storage/layout";
 import { withDirectoryLock } from "../storage/lock";
 import { recoverTransactions, type RecoveryItem } from "../storage/recovery";
 import { approveReview, type ApproveOptions, type ApplyResult } from "../patch/apply";
@@ -184,6 +185,75 @@ export class ReviewService {
     }
     await this.store.create(review);
     return review;
+  }
+
+  public async append(input: SubmitReviewInput): Promise<Review> {
+    if (input.changes.length !== 1) {
+      throw new ReviewError(
+        "INVALID_ARGUMENTS",
+        "Append requires exactly one target change.",
+      );
+    }
+    const candidate = input.changes[0];
+    if (candidate === undefined || candidate.proposalContent === undefined) {
+      throw new ReviewError(
+        "INVALID_ARGUMENTS",
+        "Append requires proposalContent.",
+      );
+    }
+    const proposalContent = candidate.proposalContent;
+    if (
+      candidate.operation !== undefined &&
+      candidate.operation !== "auto" &&
+      candidate.operation !== "modify"
+    ) {
+      throw new ReviewError(
+        "INVALID_ARGUMENTS",
+        "Append supports only existing-file modifications.",
+        { operation: candidate.operation },
+      );
+    }
+
+    const target = await resolveSafeTarget(this.vaultRoot, candidate.target);
+    if (!target.exists) {
+      throw new ReviewError(
+        "INVALID_ARGUMENTS",
+        `Append target does not exist: ${target.target}`,
+        { target: target.target },
+      );
+    }
+    const targetLock = path.join(
+      reviewLayout(this.store.storageBase).locks,
+      `target-${sha256(target.target)}.lock`,
+    );
+    return withDirectoryLock(targetLock, async () => {
+      const mutable = await this.list({
+        locations: ["pending"],
+        statuses: ["pending", "conflicted"],
+      });
+      const matches = mutable.filter((review) =>
+        review.changes.some((change) => sameTarget(change.target, target.target)),
+      );
+      if (matches.length > 1) {
+        throw new ReviewError(
+          "INVALID_ARGUMENTS",
+          `Append target belongs to multiple mutable reviews: ${target.target}`,
+          { target: target.target, reviewIds: matches.map((review) => review.id) },
+        );
+      }
+      const existing = matches[0];
+      if (existing === undefined) {
+        return this.submit({
+          ...(input.source === undefined ? {} : { source: input.source }),
+          changes: [{ target: target.target, proposalContent }],
+        });
+      }
+      return this.mergeProposalIntoReview(
+        existing.id,
+        target.target,
+        proposalContent,
+      );
+    });
   }
 
   public async get(reviewId: string): Promise<Review> {
@@ -454,6 +524,97 @@ export class ReviewService {
     await this.store.save(next);
     return next;
   }
+
+  private async mergeProposalIntoReview(
+    reviewId: string,
+    target: string,
+    proposalContent: string,
+  ): Promise<Review> {
+    return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
+      const review = await this.loadAndReconcile(reviewId);
+      assertMutable(review);
+      const matches = review.changes.filter((change) => sameTarget(change.target, target));
+      if (matches.length !== 1) {
+        throw new ReviewError(
+          "INVALID_ARGUMENTS",
+          `Append target is not unique in review ${reviewId}: ${target}`,
+          { reviewId, target },
+        );
+      }
+      const existing = matches[0];
+      if (
+        existing === undefined ||
+        existing.operation !== "modify" ||
+        existing.baseContent === null ||
+        existing.proposalContent === null
+      ) {
+        throw new ReviewError(
+          "INVALID_ARGUMENTS",
+          "Append can merge only into an existing modify change.",
+          { reviewId, target, operation: existing?.operation },
+        );
+      }
+
+      const resolved = await resolveSafeTarget(this.vaultRoot, target);
+      if (!resolved.exists) {
+        throw new ReviewError(
+          "REBASE_CONFLICT",
+          `Append target disappeared: ${target}`,
+          { reviewId, target },
+        );
+      }
+      const currentContent = await readFile(resolved.absolutePath, "utf8");
+      let latestChange = existing;
+      if (sha256(currentContent) !== existing.baseHash) {
+        const rebased = rebaseChange(existing, currentContent);
+        if (!rebased.clean || rebased.change === undefined) {
+          throw appendConflict(reviewId, target, rebased.overlappingRanges);
+        }
+        latestChange = rebased.change;
+      }
+
+      const incoming: ReviewChange = {
+        ...latestChange,
+        proposalContent,
+        proposalHash: sha256(proposalContent),
+        hunkDecisions: {},
+      };
+      const merged = rebaseChange(incoming, latestChange.proposalContent ?? currentContent);
+      if (!merged.clean || merged.change === undefined) {
+        throw appendConflict(reviewId, target, merged.overlappingRanges);
+      }
+      const mergedChange: ReviewChange = {
+        ...merged.change,
+        baseHash: latestChange.baseHash,
+        baseContent: latestChange.baseContent,
+      };
+
+      const provisional = mutateReview(
+        review,
+        replaceChange(review.changes, mergedChange),
+      );
+      const inspection = await inspectReviewConflicts(this.vaultRoot, provisional);
+      let next: Review;
+      if (inspection.conflicts.length === 0) {
+        const { conflict: _conflict, ...rest } = provisional;
+        next = { ...rest, status: "pending" };
+      } else {
+        const first = inspection.conflicts[0];
+        next = {
+          ...provisional,
+          status: "conflicted",
+          conflict: {
+            detectedAt: new Date().toISOString(),
+            changeIds: inspection.conflicts.map((item) => item.changeId),
+            reason: first?.reason ?? "base-changed",
+            advisory: false,
+          },
+        };
+      }
+      await this.store.save(next);
+      return next;
+    });
+  }
 }
 
 function mutateReview(review: Review, changes: readonly ReviewChange[]): Review {
@@ -510,6 +671,29 @@ function assertUniquePath(seen: Set<string>, target: string): void {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameTarget(left: string, right: string): boolean {
+  return process.platform === "win32"
+    ? left.toLocaleLowerCase("en-US") === right.toLocaleLowerCase("en-US")
+    : left === right;
+}
+
+function appendConflict(
+  reviewId: string,
+  target: string,
+  overlappingRanges:
+    | readonly {
+        readonly current: { readonly start: number; readonly end: number };
+        readonly proposal: { readonly start: number; readonly end: number };
+      }[]
+    | undefined,
+): ReviewError {
+  return new ReviewError(
+    "REBASE_CONFLICT",
+    "Append could not merge overlapping edits into the existing review.",
+    { reviewId, target, overlappingRanges: overlappingRanges ?? [] },
+  );
 }
 
 type Mutable<T> = { -readonly [Key in keyof T]: T[Key] };

@@ -3,8 +3,10 @@ import type { Review, ReviewChange } from "../../../core/src/model/review";
 import { ReviewError } from "../../../core/src/model/errors";
 import type { ReviewService } from "../../../core/src/service/review-service";
 import type { DiffHunk } from "../../../core/src/diff/types";
+import { t } from "../i18n";
 import { renderHunk, type DiffMode } from "./diff-renderer";
-import { ConfirmActionModal, ProposalEditModal, message } from "./modals";
+import { renderCjkWrappedText } from "./cjk-wrap-renderer";
+import { ConfirmActionModal, message } from "./modals";
 
 export const REVIEW_GATE_VIEW_TYPE = "obsidian-review-gate";
 
@@ -26,6 +28,8 @@ export class ReviewGateView extends ItemView {
   public constructor(
     leaf: WorkspaceLeaf,
     private readonly service: ReviewService,
+    private readonly openNativeEditor: (review: Review, change: ReviewChange) => Promise<void>,
+    private readonly focusNativeHunk: (index: number) => void,
   ) {
     super(leaf);
   }
@@ -35,7 +39,7 @@ export class ReviewGateView extends ItemView {
   }
 
   public getDisplayText(): string {
-    return "Review Gate";
+    return t("reviewGate");
   }
 
   public override getIcon(): string {
@@ -74,7 +78,7 @@ export class ReviewGateView extends ItemView {
       this.contentEl.empty();
       this.contentEl.createEl("p", {
         cls: "obsreview-error",
-        text: `Review Gate could not load: ${message(error)}`,
+        text: t("reviewCouldNotLoad", { error: message(error) }),
       });
     }
   }
@@ -93,12 +97,12 @@ export class ReviewGateView extends ItemView {
 
     this.contentEl.empty();
     const header = this.contentEl.createDiv({ cls: "obsreview-header" });
-    header.createEl("h2", { text: "Review Gate" });
+    header.createEl("h2", { text: t("reviewGate") });
     header.createSpan({ cls: "obsreview-count", text: String(filtered.length) });
     const tabs = this.contentEl.createDiv({ cls: "obsreview-tabs" });
     for (const tab of ["pending", "conflicted", "history"] as const) {
       const button = tabs.createEl("button", {
-        text: titleCase(tab),
+        text: tabLabel(tab),
         cls: this.tab === tab ? "is-active" : "",
       });
       button.addEventListener("click", () => {
@@ -113,10 +117,10 @@ export class ReviewGateView extends ItemView {
         cls: "obsreview-empty",
         text:
           this.tab === "history"
-            ? "No completed reviews."
+            ? t("noCompletedReviews")
             : this.tab === "conflicted"
-              ? "No conflicted reviews."
-              : "No pending reviews.",
+              ? t("noConflictedReviews")
+              : t("noPendingReviews"),
       });
       return;
     }
@@ -129,24 +133,31 @@ export class ReviewGateView extends ItemView {
       heading.createEl("strong", { text: `#${review.id.slice(-8)}` });
       heading.createSpan({
         cls: `obsreview-status is-${review.status}`,
-        text: review.conflict?.advisory === true ? "potential conflict" : review.status,
+        text:
+          review.conflict?.advisory === true
+            ? t("potentialConflict")
+            : statusLabel(review.status),
       });
       card.createEl("div", {
         cls: "obsreview-card-target",
         text:
           review.changes.length === 1
-            ? review.changes[0]?.target ?? "Unknown target"
-            : `${review.changes.length} files`,
+            ? review.changes[0]?.target ?? t("unknownTarget")
+            : t(review.changes.length === 1 ? "oneFile" : "manyFiles", {
+                count: review.changes.length,
+              }),
       });
       const source = sourceLabel(review);
       card.createEl("small", {
-        text: `${source} · revision ${review.revision} · ${formatRelative(review.updatedAt)}`,
+        text: `${source} · ${t("revisionInline", { revision: review.revision })} · ${formatRelative(review.updatedAt)}`,
       });
       const open = (): void => {
+        const firstChange = review.changes[0];
         this.selectedReviewId = review.id;
-        this.selectedChangeId = review.changes[0]?.id ?? null;
+        this.selectedChangeId = firstChange?.id ?? null;
         this.hunkIndex = 0;
         void this.refresh();
+        if (firstChange !== undefined) void this.openNativeEditor(review, firstChange);
       };
       card.addEventListener("click", open);
       card.addEventListener("keydown", (event) => {
@@ -158,21 +169,25 @@ export class ReviewGateView extends ItemView {
   private async renderReview(review: Review): Promise<void> {
     this.contentEl.empty();
     const toolbar = this.contentEl.createDiv({ cls: "obsreview-detail-toolbar" });
-    addButton(toolbar, "← Back", () => {
+    addButton(toolbar, t("back"), () => {
       this.selectedReviewId = null;
       this.selectedChangeId = null;
       void this.refresh();
     });
-    toolbar.createEl("h2", { text: `Review #${review.id.slice(-8)}` });
+    toolbar.createEl("h2", {
+      text: t("reviewHeading", { id: review.id.slice(-8) }),
+    });
     toolbar.createSpan({
       cls: `obsreview-status is-${review.status}`,
-      text: review.status,
+      text: statusLabel(review.status),
     });
 
     const metadata = this.contentEl.createDiv({ cls: "obsreview-metadata" });
-    metadata.createSpan({ text: `Agent: ${sourceLabel(review)}` });
-    metadata.createSpan({ text: `Revision: ${review.revision}` });
-    metadata.createSpan({ text: `Updated: ${formatRelative(review.updatedAt)}` });
+    metadata.createSpan({ text: t("agentLabel", { agent: sourceLabel(review) }) });
+    metadata.createSpan({ text: t("revisionLabel", { revision: review.revision }) });
+    metadata.createSpan({
+      text: t("updatedLabel", { time: formatRelative(review.updatedAt) }),
+    });
 
     if (review.conflict !== undefined) {
       const warning = this.contentEl.createDiv({
@@ -180,13 +195,13 @@ export class ReviewGateView extends ItemView {
       });
       warning.createEl("strong", {
         text: review.conflict.advisory
-          ? "⚠ Potential conflict"
-          : "⚠ Target changed since this proposal was created",
+          ? t("potentialConflictTitle")
+          : t("targetChangedTitle"),
       });
       warning.createEl("p", {
         text: review.conflict.advisory
-          ? "A watcher observed a target change. Approve will recompute every base hash before any write."
-          : "Direct apply is blocked. Rebase, reject, or use explicit Force Apply after reviewing Base / Current / Proposal.",
+          ? t("potentialConflictDescription")
+          : t("targetChangedDescription"),
       });
     }
 
@@ -196,6 +211,7 @@ export class ReviewGateView extends ItemView {
       this.selectedChangeId = changeId;
       this.hunkIndex = 0;
       void this.refresh();
+      void this.openNativeEditor(review, selectChange(review, changeId));
     });
 
     if (review.status === "conflicted" || review.conflict?.advisory === true) {
@@ -205,52 +221,63 @@ export class ReviewGateView extends ItemView {
     const actionBar = this.contentEl.createDiv({ cls: "obsreview-review-actions" });
     const mutable = review.status === "pending" || review.status === "conflicted";
     if (mutable && currentChange.proposalContent !== null) {
-      addButton(actionBar, "Edit proposal", () => this.editProposal(review, currentChange));
+      addButton(actionBar, t("editProposal"), () =>
+        this.openNativeEditor(review, currentChange),
+      );
     }
-    addToggle(actionBar, "Unified", this.mode === "unified", () => {
+    addToggle(actionBar, t("unified"), this.mode === "unified", () => {
       this.mode = "unified";
       void this.refresh();
     });
-    addToggle(actionBar, "Split", this.mode === "split", () => {
+    addToggle(actionBar, t("split"), this.mode === "split", () => {
       this.mode = "split";
       void this.refresh();
     });
-    addButton(actionBar, "Previous hunk", () => this.moveHunk(-1));
-    addButton(actionBar, "Next hunk", () => this.moveHunk(1));
+    addButton(actionBar, t("previousHunk"), () => this.moveHunk(-1));
+    addButton(actionBar, t("nextHunk"), () => this.moveHunk(1));
 
     const base = currentChange.baseContent ?? "";
     const proposal = currentChange.proposalContent ?? "";
     const diff = this.service.diffEngine.diff(base, proposal);
     const diffSummary = this.contentEl.createDiv({ cls: "obsreview-diff-summary" });
-    diffSummary.createSpan({ text: currentChange.operation.toUpperCase() });
+    diffSummary.createSpan({ text: operationLabel(currentChange.operation) });
     diffSummary.createEl("code", { text: currentChange.target });
     if (currentChange.newTarget !== undefined) {
       diffSummary.createSpan({ text: `→ ${currentChange.newTarget}` });
     }
     diffSummary.createSpan({
-      text: `+${diff.stats.addedLines} −${diff.stats.removedLines} · ${diff.stats.hunkCount} hunks`,
+      text: t(diff.stats.hunkCount === 1 ? "diffSummaryOne" : "diffSummaryMany", {
+        added: diff.stats.addedLines,
+        removed: diff.stats.removedLines,
+        count: diff.stats.hunkCount,
+      }),
     });
 
     const hunks = this.contentEl.createDiv({ cls: "obsreview-hunks" });
     if (diff.hunks.length === 0) {
-      hunks.createEl("p", { cls: "obsreview-empty", text: "Proposal matches base." });
+      hunks.createEl("p", { cls: "obsreview-empty", text: t("proposalMatchesBase") });
     } else {
       this.hunkIndex = clamp(this.hunkIndex, 0, diff.hunks.length - 1);
       for (const hunk of diff.hunks) {
         const decision = currentChange.hunkDecisions[hunk.id]?.decision;
-        renderHunk(hunks, hunk, this.mode, {
-          ...(decision === undefined ? {} : { decision }),
-          readOnly: !mutable || currentChange.proposalContent === null,
-          ...(mutable && currentChange.proposalContent !== null
-            ? {
-                onAccept: async (selected: DiffHunk) => {
-                  await this.decideHunk(review, currentChange, selected, "accepted");
-                },
-                onReject: async (selected: DiffHunk) => {
-                  await this.decideHunk(review, currentChange, selected, "rejected");
-                },
-              }
-            : {}),
+        renderHunk({
+          parent: hunks,
+          hunk,
+          mode: this.mode,
+          callbacks: {
+            ...(decision === undefined ? {} : { decision }),
+            readOnly: !mutable || currentChange.proposalContent === null,
+            ...(mutable && currentChange.proposalContent !== null
+              ? {
+                  onAccept: async (selected: DiffHunk) => {
+                    await this.decideHunk(review, currentChange, selected, "accepted");
+                  },
+                  onReject: async (selected: DiffHunk) => {
+                    await this.decideHunk(review, currentChange, selected, "rejected");
+                  },
+                }
+              : {}),
+          },
         });
       }
     }
@@ -265,37 +292,42 @@ export class ReviewGateView extends ItemView {
       if (context === undefined) return;
       const wrapper = this.contentEl.createDiv({ cls: "obsreview-three-way" });
       for (const item of [
-        { label: "Base", content: context.base },
-        { label: "Current", content: context.current },
-        { label: "Proposal", content: context.proposal },
+        { label: t("base"), content: context.base },
+        { label: t("current"), content: context.current },
+        { label: t("proposal"), content: context.proposal },
       ]) {
         const panel = wrapper.createDiv({ cls: "obsreview-three-way-panel" });
         panel.createEl("h4", { text: item.label });
-        panel.createEl("pre", { text: item.content ?? "(file does not exist)" });
+        panel.createEl("pre", { text: item.content ?? t("fileDoesNotExist") });
       }
       const actions = this.contentEl.createDiv({ cls: "obsreview-conflict-actions" });
-      addButton(actions, "Refresh / Rebase", async () => {
+      addButton(actions, t("rebaseReview"), async () => {
         try {
           await this.service.rebase(review.id, { expectedRevision: review.revision });
-          new Notice("Review rebased onto current target state.");
+          new Notice(t("reviewRebased"));
           await this.refresh();
         } catch (error) {
-          new Notice(`Automatic rebase was not safe: ${message(error)}`);
+          new Notice(t("automaticRebaseUnsafe", { error: message(error) }));
           await this.refresh();
         }
       });
-      addButton(actions, "Force Apply…", () => this.confirmForceApply(review), "mod-warning");
+      addButton(
+        actions,
+        t("forceApplyEllipsis"),
+        () => this.confirmForceApply(review),
+        "mod-warning",
+      );
     } catch (error) {
       this.contentEl.createEl("p", {
         cls: "obsreview-error",
-        text: `Could not load conflict context: ${message(error)}`,
+        text: t("conflictContextLoadFailed", { error: message(error) }),
       });
     }
   }
 
   private renderFinalActions(review: Review): void {
     const footer = this.contentEl.createDiv({ cls: "obsreview-final-actions" });
-    addButton(footer, "Approve review", async () => {
+    addButton(footer, t("approveReview"), async () => {
       try {
         const result = await this.service.approve(review.id, {
           expectedRevision: review.revision,
@@ -303,54 +335,33 @@ export class ReviewGateView extends ItemView {
         });
         new Notice(
           result.maintenancePending === true
-            ? "Review applied. Backup housekeeping will be retried on next startup."
-            : "Review approved and applied.",
+            ? t("reviewAppliedMaintenancePending")
+            : t("reviewApproved"),
         );
         this.selectedReviewId = null;
         await this.refresh();
       } catch (error) {
-        new Notice(`Approve refused: ${message(error)}`);
+        new Notice(t("approveRefused", { error: message(error) }));
         await this.refresh();
       }
     }, "mod-cta");
-    addButton(footer, "Reject review…", () => {
-      new ConfirmActionModal(
-        this.app,
-        "Reject review",
-        "The proposal will move to history and the target files will remain unchanged.",
-        "Reject review",
-        false,
-        async () => {
+    addButton(footer, t("rejectReviewEllipsis"), () => {
+      new ConfirmActionModal(this.app, {
+        title: t("rejectReview"),
+        explanation: t("rejectReviewDescription"),
+        confirmationText: t("rejectReview"),
+        dangerous: false,
+        action: async () => {
           await this.service.reject(review.id, {
             expectedRevision: review.revision,
             actor: "obsidian-user",
           });
-          new Notice("Review rejected; no target file was written.");
+          new Notice(t("rejectedReviewNotice"));
           this.selectedReviewId = null;
           await this.refresh();
         },
-      ).open();
+      }).open();
     });
-  }
-
-  private editProposal(review: Review, change: ReviewChange): void {
-    if (change.proposalContent === null) return;
-    new ProposalEditModal(
-      this.app,
-      change.baseContent ?? "",
-      change.proposalContent,
-      this.mode,
-      async (proposalContent) => {
-        await this.service.updateProposal(review.id, {
-          changeId: change.id,
-          proposalContent,
-          expectedRevision: review.revision,
-          actor: "obsidian-user",
-        });
-        new Notice("Proposal updated. Target file is still unchanged.");
-        await this.refresh();
-      },
-    ).open();
   }
 
   private async decideHunk(
@@ -360,33 +371,33 @@ export class ReviewGateView extends ItemView {
     decision: "accepted" | "rejected",
   ): Promise<void> {
     try {
-      await this.service.decideHunk(review.id, {
+      const updatedReview = await this.service.decideHunk(review.id, {
         changeId: change.id,
         hunkId: hunk.id,
         decision,
         expectedRevision: review.revision,
         actor: "obsidian-user",
       });
+      await this.openNativeEditor(updatedReview, selectChange(updatedReview, change.id));
       new Notice(
         decision === "accepted"
-          ? "Hunk accepted in proposal state; target remains unchanged."
-          : "Hunk rejected and restored to base in proposal state; target remains unchanged.",
+          ? t("hunkAccepted")
+          : t("hunkRejected"),
       );
       await this.refresh();
     } catch (error) {
-      new Notice(`Hunk decision failed: ${message(error)}`);
+      new Notice(t("hunkDecisionFailed", { error: message(error) }));
       await this.refresh();
     }
   }
 
   private confirmForceApply(review: Review): void {
-    new ConfirmActionModal(
-      this.app,
-      "Force Apply conflicted review",
-      "Danger: this bypasses base-hash conflict refusal and can overwrite current target changes. A recoverable backup is retained in external review storage. Use only after comparing Base, Current, and Proposal.",
-      "Force Apply",
-      true,
-      async () => {
+    new ConfirmActionModal(this.app, {
+      title: t("forceApplyTitle"),
+      explanation: t("forceApplyDanger"),
+      confirmationText: t("forceApply"),
+      dangerous: true,
+      action: async () => {
         const result = await this.service.approve(review.id, {
           force: true,
           expectedRevision: review.revision,
@@ -394,13 +405,13 @@ export class ReviewGateView extends ItemView {
         });
         new Notice(
           result.maintenancePending === true
-            ? "Conflicted review was force-applied; backup housekeeping is pending."
-            : "Conflicted review was force-applied.",
+            ? t("conflictedForceAppliedMaintenancePending")
+            : t("conflictedForceApplied"),
         );
         this.selectedReviewId = null;
         await this.refresh();
       },
-    ).open();
+    }).open();
   }
 
   private moveHunk(delta: number): void {
@@ -410,6 +421,7 @@ export class ReviewGateView extends ItemView {
     if (elements.length === 0) return;
     this.hunkIndex = (this.hunkIndex + delta + elements.length) % elements.length;
     elements[this.hunkIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    this.focusNativeHunk(this.hunkIndex);
   }
 }
 
@@ -423,8 +435,8 @@ function renderFileSelector(
   for (const change of review.changes) {
     const button = list.createEl("button", {
       cls: change.id === selectedChangeId ? "is-active" : "",
-      text: `${operationSymbol(change.operation)} ${change.target}`,
     });
+    renderCjkWrappedText(button, `${operationSymbol(change.operation)} ${change.target}`);
     button.addEventListener("click", () => onSelect(change.id));
   }
 }
@@ -432,7 +444,7 @@ function renderFileSelector(
 function selectChange(review: Review, changeId: string | null): ReviewChange {
   const selected = review.changes.find((change) => change.id === changeId);
   const first = selected ?? review.changes[0];
-  if (first === undefined) throw new Error("Review has no changes.");
+  if (first === undefined) throw new Error(t("reviewHasNoChanges"));
   return first;
 }
 
@@ -461,7 +473,7 @@ function sourceLabel(review: Review): string {
   const agent = review.source?.agent;
   const session = review.source?.session;
   if (agent !== undefined && session !== undefined) return `${agent}/${session}`;
-  return agent ?? session ?? "external agent";
+  return agent ?? session ?? t("externalAgent");
 }
 
 function operationSymbol(operation: ReviewChange["operation"]): string {
@@ -481,20 +493,55 @@ function isTerminal(review: Review): boolean {
   return review.status === "approved" || review.status === "rejected" || review.status === "cancelled";
 }
 
-function titleCase(value: string): string {
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
+function tabLabel(tab: ReviewTab): string {
+  switch (tab) {
+    case "pending":
+      return t("tabPending");
+    case "conflicted":
+      return t("tabConflicted");
+    case "history":
+      return t("tabHistory");
+  }
+}
+
+function statusLabel(status: Review["status"]): string {
+  switch (status) {
+    case "pending":
+      return t("statusPending");
+    case "approved":
+      return t("statusApproved");
+    case "rejected":
+      return t("statusRejected");
+    case "conflicted":
+      return t("statusConflicted");
+    case "cancelled":
+      return t("statusCancelled");
+  }
+}
+
+function operationLabel(operation: ReviewChange["operation"]): string {
+  switch (operation) {
+    case "create":
+      return t("operationCreate");
+    case "modify":
+      return t("operationModify");
+    case "delete":
+      return t("operationDelete");
+    case "rename":
+      return t("operationRename");
+  }
 }
 
 function formatRelative(timestamp: string): string {
   const milliseconds = Date.now() - Date.parse(timestamp);
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return timestamp;
   const seconds = Math.floor(milliseconds / 1_000);
-  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 60) return t("relativeSeconds", { count: seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return t("relativeMinutes", { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 24) return t("relativeHours", { count: hours });
+  return t("relativeDays", { count: Math.floor(hours / 24) });
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

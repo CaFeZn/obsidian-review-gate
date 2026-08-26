@@ -65,7 +65,11 @@ test("path validation rejects a symlink escape", async () => {
   const outside = await createVault();
   try {
     await writeFile(path.join(outside, "secret.md"), "secret", "utf8");
-    await symlink(outside, path.join(vault, "escape"), "dir");
+    await symlink(
+      outside,
+      path.join(vault, "escape"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
     await assert.rejects(
       resolveSafeTarget(vault, "escape/secret.md"),
       (error: unknown) => error instanceof ReviewError && error.code === "INVALID_TARGET_PATH",

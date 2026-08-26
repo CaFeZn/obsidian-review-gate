@@ -3,7 +3,11 @@
   --obsreview-removed: color-mix(in srgb, var(--color-red) 16%, transparent);
   --obsreview-border: var(--background-modifier-border);
   padding: 12px;
-  overflow: auto;
+  min-width: 0;
+  max-width: 100%;
+  container-type: inline-size;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* Keep protocol/storage files out of the normal note-browsing experience. */
@@ -101,12 +105,17 @@
 .obsreview-file-list {
   margin: 10px 0;
   max-height: 180px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .obsreview-file-list button {
+  width: 100%;
+  min-width: 0;
+  height: auto;
   text-align: left;
-  overflow-wrap: anywhere;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .obsreview-conflict-warning {
@@ -140,8 +149,10 @@
   margin: 0;
   padding: 8px;
   max-height: 260px;
-  overflow: auto;
-  white-space: pre;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .obsreview-review-actions,
@@ -149,6 +160,11 @@
 .obsreview-conflict-actions {
   flex-wrap: wrap;
   margin: 10px 0;
+}
+
+.obsreview-review-actions button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .obsreview-diff-summary {
@@ -167,26 +183,36 @@
 .obsreview-hunk-header {
   background: var(--background-secondary);
   padding: 6px 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .obsreview-hunk-header code {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .obsreview-hunk-actions {
   display: flex;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
 }
 
 .obsreview-diff {
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--font-monospace);
   font-size: var(--font-smaller);
-  overflow-x: auto;
+  overflow-x: hidden;
 }
 
 .obsreview-diff-line {
   display: grid;
-  grid-template-columns: 3.5em 3.5em 1.5em minmax(max-content, 1fr);
+  grid-template-columns: 3.5em 3.5em 1.5em minmax(0, 1fr);
   min-height: 1.5em;
 }
 
@@ -214,7 +240,9 @@
 }
 
 .obsreview-line-content {
-  white-space: pre;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   padding: 0 6px;
 }
 
@@ -231,7 +259,7 @@
 
 .obsreview-split-cell {
   display: grid;
-  grid-template-columns: 3.5em minmax(max-content, 1fr);
+  grid-template-columns: 3.5em minmax(0, 1fr);
   min-width: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--obsreview-border) 40%, transparent);
 }
@@ -272,6 +300,16 @@
   padding: 18px;
 }
 
+@container (max-width: 520px) {
+  .obsreview-diff-split {
+    grid-template-columns: 1fr;
+  }
+
+  .obsreview-split-cell.is-left {
+    border-right: 0;
+  }
+}
+
 @media (max-width: 900px) {
   .obsreview-three-way {
     grid-template-columns: 1fr;
@@ -286,6 +324,24 @@
 
 /* Public CodeMirror 6 proposal editor. The review page remains the authority
    for hunk decisions; these decorations are advisory visual context only. */
+.obsreview-native-base,
+.obsreview-native-proposal {
+  --obsreview-added: color-mix(in srgb, var(--color-green) 16%, transparent);
+  --obsreview-removed: color-mix(in srgb, var(--color-red) 16%, transparent);
+  --obsreview-border: var(--background-modifier-border);
+}
+
+.obsreview-native-proposal {
+  container-name: obsreview-native-proposal;
+  container-type: inline-size;
+}
+
+.obsreview-native-base .cm-line,
+.obsreview-native-proposal .cm-line {
+  word-break: auto-phrase;
+  text-wrap: pretty;
+}
+
 .obsreview-cm6-host {
   min-height: 420px;
   background: var(--background-primary);
@@ -348,6 +404,109 @@
 .obsreview-cm-inline-remove {
   text-decoration: underline;
   text-decoration-thickness: 2px;
+}
+
+.obsreview-cm-inline-phrase,
+.obsreview-cm-cjk-word {
+  white-space: nowrap;
+}
+
+.obsreview-native-base .cm-inline-code,
+.obsreview-native-proposal .cm-inline-code {
+  white-space: nowrap;
+}
+
+.obsreview-cjk-wrap {
+  white-space: nowrap;
+}
+
+.obsreview-native-hunk-label,
+.obsreview-native-base .cm-line[data-obsreview-hunk]::before,
+.obsreview-native-proposal .cm-line[data-obsreview-hunk]::before {
+  content: attr(data-obsreview-hunk);
+  display: block;
+  padding: 2px 6px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--obsreview-border);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  pointer-events: none;
+}
+
+.obsreview-native-base .obsreview-native-hunk-label,
+.obsreview-native-base .cm-line[data-obsreview-hunk]::before {
+  background: color-mix(
+    in srgb,
+    var(--color-red) 16%,
+    var(--background-secondary)
+  );
+}
+
+.obsreview-native-proposal .obsreview-native-hunk-label,
+.obsreview-native-proposal .cm-line[data-obsreview-hunk]::before {
+  background: color-mix(
+    in srgb,
+    var(--color-green) 16%,
+    var(--background-secondary)
+  );
+}
+
+.obsreview-native-base .obsreview-native-hunk-start {
+  border-top: 1px solid var(--color-red);
+  box-shadow: inset 3px 0 0 var(--color-red);
+}
+
+.obsreview-native-base .obsreview-native-hunk-end {
+  border-bottom: 1px solid var(--color-red);
+}
+
+.obsreview-native-proposal .obsreview-native-hunk-start {
+  border-top: 1px solid var(--color-green);
+  box-shadow: inset 3px 0 0 var(--color-green);
+}
+
+.obsreview-native-proposal .obsreview-native-hunk-end {
+  border-bottom: 1px solid var(--color-green);
+}
+
+.obsreview-native-hunk-anchor {
+  min-height: 2em;
+}
+
+.obsreview-native-alignment-spacer {
+  background: var(--background-secondary-alt);
+  pointer-events: none;
+  user-select: none;
+}
+
+.obsreview-native-spacer-line {
+  height: 1lh;
+  min-height: 1lh;
+  white-space: pre;
+}
+
+@container obsreview-native-proposal (max-width: 520px) {
+  .obsreview-native-proposal .view-header-title-container {
+    display: none;
+  }
+
+  .obsreview-native-proposal .obsreview-native-proposal-toolbar {
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: stretch;
+    flex-wrap: nowrap;
+    overflow: visible;
+  }
+
+  .obsreview-native-proposal-toolbar > :not(.obsreview-native-proposal-action) {
+    display: none;
+  }
+
+  .obsreview-native-proposal .obsreview-native-proposal-action {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 
 @media (max-width: 900px) {

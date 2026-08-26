@@ -1,4 +1,6 @@
+import { constants as nodeFsConstants } from "node:fs";
 import {
+  copyFile as nodeCopyFile,
   lstat as nodeLstat,
   mkdir as nodeMkdir,
   open as nodeOpen,
@@ -170,7 +172,24 @@ export class NodeReviewFileSystem implements ReviewFileSystem {
   }
 
   public async rename(source: string, destination: string): Promise<void> {
-    await nodeRename(source, destination);
+    try {
+      await nodeRename(source, destination);
+    } catch (error) {
+      if (!isFileSystemError(error) || error.code !== "EXDEV") throw error;
+      const sourceInfo = await nodeLstat(source);
+      if (sourceInfo.isDirectory()) throw error;
+
+      let destinationCreated = false;
+      try {
+        await nodeCopyFile(source, destination, nodeFsConstants.COPYFILE_EXCL);
+        destinationCreated = true;
+        await this.syncFile(destination);
+        await nodeRm(source);
+      } catch (fallbackError) {
+        if (destinationCreated) await nodeRm(destination, { force: true });
+        throw fallbackError;
+      }
+    }
   }
 
   public async rm(value: string, options: ReviewRemoveOptions = {}): Promise<void> {

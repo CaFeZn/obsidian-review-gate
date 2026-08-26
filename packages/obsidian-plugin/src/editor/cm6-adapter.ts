@@ -1,5 +1,6 @@
 import { JsDiffEngine } from "../../../core/src/diff/jsdiff-engine";
 import type { DiffLine, InlineFragment } from "../../../core/src/diff/types";
+import { t } from "../i18n";
 
 /**
  * CodeMirror 6 compatibility layer.
@@ -61,8 +62,8 @@ function createSplitEditor(
   const split = document.createElement("div");
   split.className = "obsreview-cm6-split";
   parent.appendChild(split);
-  const baseHost = createPane(split, "Current / Base", "is-base");
-  const proposalHost = createPane(split, "Proposal", "is-proposal");
+  const baseHost = createPane(split, t("currentBase"), "is-base");
+  const proposalHost = createPane(split, t("proposal"), "is-proposal");
 
   const refreshBaseDecorations = stateModule.StateEffect.define<DynamicDecorationSet>();
   const baseDecorationField = stateModule.StateField.define<DynamicDecorationSet>({
@@ -143,7 +144,7 @@ function createUnifiedEditor(
   stateModule: DynamicStateModule,
   viewModule: DynamicViewModule,
 ): MergeEditorController {
-  const unifiedHost = createPane(parent, "Editable proposal", "is-unified");
+  const unifiedHost = createPane(parent, t("editableProposal"), "is-unified");
   const proposalDecorationField = createProposalDecorationField(
     base,
     stateModule,

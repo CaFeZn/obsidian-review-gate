@@ -13,7 +13,7 @@ const reviewHome = fs.mkdtempSync(path.join(os.tmpdir(), "obsreview-release-home
 const version = invoke(["--version", "--json"]);
 if (version.status !== 0) throw new Error(version.stderr || version.stdout);
 const versionDocument = JSON.parse(version.stdout);
-if (versionDocument.ok !== true || versionDocument.version !== "0.1.3") {
+if (versionDocument.ok !== true || versionDocument.version !== "0.1.4") {
   throw new Error(`Unexpected standalone CLI version output: ${version.stdout}`);
 }
 
@@ -23,7 +23,9 @@ try {
   const target = path.join(vault, "Framework", "CAN.md");
   const proposal = path.join(vault, "proposal.md");
   fs.writeFileSync(target, "# CAN\n\nBase\n");
-  fs.writeFileSync(proposal, "# CAN\n\nRelease proposal\n");
+  fs.writeFileSync(proposal, "# CAN\n\nHuman\nBase\n");
+  const appendedProposal = path.join(vault, "appended-proposal.md");
+  fs.writeFileSync(appendedProposal, "# CAN\n\nBase\nAgent\n");
 
   const submit = invoke([
     "submit",
@@ -52,6 +54,22 @@ try {
     throw new Error("Standalone pending submit did not create external review storage.");
   }
 
+  const append = invoke([
+    "append",
+    "--vault",
+    vault,
+    "--target",
+    "Framework/CAN.md",
+    "--file",
+    appendedProposal,
+    "--json",
+  ]);
+  if (append.status !== 0) throw new Error(append.stderr || append.stdout);
+  const appendedDocument = JSON.parse(append.stdout);
+  if (appendedDocument.reviewId !== document.reviewId || appendedDocument.revision !== 2) {
+    throw new Error(`Standalone append did not reuse the review: ${append.stdout}`);
+  }
+
   const approve = invoke([
     "approve",
     document.reviewId,
@@ -60,7 +78,7 @@ try {
     "--json",
   ]);
   if (approve.status !== 0) throw new Error(approve.stderr || approve.stdout);
-  if (fs.readFileSync(target, "utf8") !== "# CAN\n\nRelease proposal\n") {
+  if (fs.readFileSync(target, "utf8") !== "# CAN\n\nHuman\nBase\nAgent\n") {
     throw new Error("Standalone approve did not apply proposal.");
   }
   console.log(`Standalone release CLI smoke passed: ${document.reviewId}`);

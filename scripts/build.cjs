@@ -78,7 +78,7 @@ function buildPluginRelease() {
         name: "Obsidian Review Gate",
         version,
         mode,
-        codeMirror: "external-provided-by-obsidian-runtime",
+        codeMirror: "obsidian-host",
         node: process.version,
         builtAt: new Date().toISOString(),
       },
@@ -154,8 +154,8 @@ function buildCliRelease() {
 
 /**
  * Bundle the project's emitted CommonJS graph without third-party build tools.
- * Relative requires are resolved and embedded. Node built-ins, Obsidian, and
- * optional CodeMirror modules remain normal runtime requires.
+ * Relative requires are resolved and embedded. Node built-ins and Obsidian
+ * remain normal runtime requires.
  */
 function bundleCommonJs(entryFile, options) {
   const modules = new Map();

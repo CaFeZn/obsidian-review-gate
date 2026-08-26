@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, stat, writeFile } from "./file-system";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { ReviewError } from "../model/errors";
+import { ReviewError, errorMessage } from "../model/errors";
 
 export interface LockOptions {
   readonly timeoutMs?: number;
@@ -23,6 +23,12 @@ interface LockOwner {
   readonly token: string;
   readonly createdAt: string;
 }
+
+type LockIoPhase = "owner-read" | "owner-write" | "owner-cleanup" | "release" | "stale-cleanup";
+
+type LockIoFailure = Readonly<{ error: unknown; retryError?: unknown }>;
+
+const activeLockTokens = new Map<string, string>();
 
 export async function acquireDirectoryLock(
   lockPath: string,
@@ -51,28 +57,61 @@ export async function acquireDirectoryLock(
           mode: 0o600,
         });
       } catch (error) {
+        const ownerWriteError = error instanceof Error ? error : new Error(String(error));
         // A directory without owner metadata must never be left behind by a failed
         // acquisition. Otherwise every future caller would wait for stale timeout.
-        await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
-        throw error;
+        let cleanupError: unknown;
+        try {
+          await removeLockDirectory(lockPath, "owner-cleanup", retryDelayMs);
+        } catch (cleanupFailure) {
+          cleanupError =
+            cleanupFailure instanceof Error ? cleanupFailure : new Error(String(cleanupFailure));
+        }
+        throw lockIoError("owner-write", lockPath, {
+          error: ownerWriteError,
+          ...(cleanupError === undefined ? {} : { retryError: cleanupError }),
+        });
       }
+      activeLockTokens.set(lockPath, token);
       let released = false;
       return {
         path: lockPath,
         token,
         async release(): Promise<void> {
           if (released) return;
-          released = true;
-          const current = await readOwner(lockPath);
-          if (current?.token === token) {
-            await rm(lockPath, { recursive: true, force: true });
+          try {
+            let current: LockOwner | null;
+            try {
+              current = await readOwner(lockPath);
+            } catch (error) {
+              const ownerReadError = error instanceof Error ? error : new Error(String(error));
+              throw lockIoError("owner-read", lockPath, { error: ownerReadError });
+            }
+            if (current?.token === token) {
+              await removeLockDirectory(lockPath, "release", retryDelayMs);
+            }
+            released = true;
+          } finally {
+            if (activeLockTokens.get(lockPath) === token) activeLockTokens.delete(lockPath);
           }
         },
       };
     } catch (error) {
+      if (!(error instanceof Error)) throw error;
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
-      if (await lockIsStale(lockPath, staleMs)) {
-        await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
+      let stale: boolean;
+      try {
+        stale = await lockIsStale(lockPath, staleMs);
+      } catch (inspectionError) {
+        if (!(inspectionError instanceof Error)) throw inspectionError;
+        if (isRetryableFileSystemError(inspectionError) && Date.now() < deadline) {
+          await delay(retryDelayMs, options.signal);
+          continue;
+        }
+        throw lockIoError("owner-read", lockPath, { error: inspectionError });
+      }
+      if (stale) {
+        await removeLockDirectory(lockPath, "stale-cleanup", retryDelayMs);
         continue;
       }
       if (Date.now() >= deadline) {
@@ -111,6 +150,7 @@ async function lockIsStale(lockPath: string, staleMs: number): Promise<boolean> 
       const lockStat = await stat(lockPath);
       return lockStat !== null && Date.now() - lockStat.mtimeMs > staleMs;
     } catch (error) {
+      if (!(error instanceof Error)) throw error;
       if (isNodeError(error) && error.code === "ENOENT") return false;
       throw error;
     }
@@ -118,12 +158,68 @@ async function lockIsStale(lockPath: string, staleMs: number): Promise<boolean> 
   const age = Date.now() - Date.parse(owner.createdAt);
   if (!Number.isFinite(age) || age > staleMs) return true;
   if (owner.hostname !== os.hostname()) return false;
+  if (owner.pid === process.pid) return activeLockTokens.get(lockPath) !== owner.token;
   try {
     process.kill(owner.pid, 0);
     return false;
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return isNodeError(error) && error.code === "ESRCH";
   }
+}
+
+async function removeLockDirectory(
+  lockPath: string,
+  phase: LockIoPhase,
+  retryDelayMs: number,
+): Promise<void> {
+  let firstError: Error | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await rm(lockPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      firstError ??= error;
+      if (attempt === 0 && isRetryableFileSystemError(error)) {
+        await delay(retryDelayMs, undefined);
+        continue;
+      }
+      throw lockIoError(phase, lockPath, {
+        error: firstError,
+        ...(error === firstError ? {} : { retryError: error }),
+      });
+    }
+  }
+}
+
+function lockIoError(
+  phase: LockIoPhase,
+  lockPath: string,
+  failure: LockIoFailure,
+): ReviewError {
+  const primaryMessage = errorMessage(failure.error);
+  const details = {
+    lockPath,
+    phase,
+    error: primaryMessage,
+    ...(failure.retryError === undefined
+      ? {}
+      : { retryError: errorMessage(failure.retryError) }),
+  };
+  const options = failure.error instanceof Error ? { cause: failure.error } : undefined;
+  return new ReviewError(
+    "IO_ERROR",
+    `Review lock ${phase} failed at ${lockPath}: ${primaryMessage}`,
+    details,
+    options,
+  );
+}
+
+function isRetryableFileSystemError(error: unknown): boolean {
+  return (
+    isNodeError(error) && ["EACCES", "EBUSY", "ENOTEMPTY", "EPERM"].includes(error.code ?? "")
+  );
 }
 
 async function readOwner(lockPath: string): Promise<LockOwner | null> {
