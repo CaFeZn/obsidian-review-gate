@@ -47,6 +47,10 @@ declare module "obsidian" {
   export interface WorkspaceParent {}
 
   export interface Workspace {
+    rootSplit: WorkspaceParent;
+    iterateRootLeaves(callback: (leaf: WorkspaceLeaf) => unknown): void;
+    getMostRecentLeaf(root?: WorkspaceParent): WorkspaceLeaf | null;
+    setActiveLeaf(leaf: WorkspaceLeaf, params?: { focus?: boolean }): void;
     getLeavesOfType(type: string): WorkspaceLeaf[];
     getRightLeaf(create: boolean): WorkspaceLeaf | null;
     getLeaf(newLeaf: "tab"): WorkspaceLeaf;
@@ -56,6 +60,20 @@ declare module "obsidian" {
       before?: boolean,
     ): WorkspaceLeaf;
     revealLeaf(leaf: WorkspaceLeaf): Promise<void>;
+    on(
+      name: "file-menu",
+      callback: (menu: Menu, file: TAbstractFile) => unknown,
+    ): EventRef;
+  }
+
+  export class Menu {
+    addItem(callback: (item: MenuItem) => unknown): this;
+  }
+
+  export class MenuItem {
+    setTitle(title: string): this;
+    setIcon(icon: string): this;
+    onClick(callback: () => unknown): this;
   }
 
   export interface App {
@@ -74,6 +92,7 @@ declare module "obsidian" {
   }
 
   export class WorkspaceLeaf {
+    parent: WorkspaceParent;
     view: unknown;
     getContainer(): WorkspaceParent;
     open(view: ItemView): Promise<ItemView>;

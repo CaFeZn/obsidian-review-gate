@@ -32,6 +32,17 @@ test("review watcher refreshes the queue and closes an approved native pair", as
   assert.ok(refreshIndex > closeApprovedIndex);
 });
 
+test("file menu opens history without routing native edits through review submission", async () => {
+  const givenPluginSource = await readPluginSource("main.ts");
+
+  assert.match(givenPluginSource, /this\.app\.workspace\.on\("file-menu"/u);
+  assert.match(givenPluginSource, /this\.openFileHistory\(file\.path\)/u);
+  assert.doesNotMatch(
+    givenPluginSource,
+    /(?:this\.service|opened\.service)(?:\?\.|\.)(?:submit|append)\(/u,
+  );
+});
+
 async function readPluginSource(filename: string): Promise<string> {
   return readFile(
     path.join(process.cwd(), "packages", "obsidian-plugin", "src", filename),

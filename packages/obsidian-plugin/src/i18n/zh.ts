@@ -43,6 +43,7 @@ export const ZH_MESSAGES = {
   externalRefreshDeferred:
     "检测到较新的审阅修订。未保存的提案已保留，请先保存或处理修订冲突。",
   externalAgent: "外部代理",
+  fileHistory: "修改历史",
   fileDoesNotExist: "（文件不存在）",
   forceApply: "强制应用",
   forceApplyDanger:
@@ -58,9 +59,11 @@ export const ZH_MESSAGES = {
   manyFiles: "{count} 个文件",
   nextHunk: "下一个变更块",
   noCompletedReviews: "没有已完成的审阅。",
+  noFileHistory: "此文件没有审阅门禁修改历史。",
   noConflictedReviews: "没有存在冲突的审阅。",
   noPendingReviews: "没有待审阅项。",
   oneFile: "{count} 个文件",
+  allReviews: "全部审阅",
   openReviewGate: "打开审阅门禁",
   operationCreate: "新建",
   operationDelete: "删除",
@@ -110,6 +113,7 @@ export const ZH_MESSAGES = {
   revisionInline: "修订 {revision}",
   revisionLabel: "修订：{revision}",
   saveProposal: "保存提案",
+  searchFileHistory: "搜索有审阅记录的文件路径",
   split: "并排",
   statusApproved: "已批准",
   statusCancelled: "已取消",

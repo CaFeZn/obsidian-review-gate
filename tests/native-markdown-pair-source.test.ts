@@ -63,13 +63,12 @@ test("proposal leaf header keeps every action visible when the native leaf is na
   assert.doesNotMatch(givenStyles, /\.obsreview-native-proposal \.view-header \{/u);
 });
 
-test("closing either native Markdown leaf detaches only the review pair", async () => {
+test("closing either native Markdown leaf releases its owned review views", async () => {
   const givenPairSource = await readEditorSource("native-markdown-pair.ts");
 
   const closeCallbacks = givenPairSource.match(/\(\) => closePair\(\)/gu) ?? [];
   assert.equal(closeCallbacks.length, 2);
-  assert.match(givenPairSource, /proposalLeaf\.detach\(\)/u);
-  assert.match(givenPairSource, /baseLeaf\.detach\(\)/u);
+  assert.match(givenPairSource, /reviewLeaves\.release\(baseOwned, proposalOwned\)/u);
   assert.match(givenPairSource, /request\.onClose\(\)/u);
 });
 
@@ -86,11 +85,11 @@ test("stale native Markdown leaves do not crash pair reuse or cleanup", async ()
   );
   assert.match(
     givenPairSource,
-    /if \(isNativeViewMounted\(proposalView\.containerEl\)\) proposalLeaf\.detach\(\)/u,
+    /const baseOwned = isNativeViewMounted\(baseView\.containerEl\)/u,
   );
   assert.match(
     givenPairSource,
-    /if \(isNativeViewMounted\(baseView\.containerEl\)\) baseLeaf\.detach\(\)/u,
+    /const proposalOwned = isNativeViewMounted\(proposalView\.containerEl\)/u,
   );
 });
 

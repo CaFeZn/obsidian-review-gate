@@ -3,6 +3,12 @@ import type { Review, ReviewChange } from "../../../core/src/model/review";
 import { ReviewError } from "../../../core/src/model/errors";
 import type { ReviewService } from "../../../core/src/service/review-service";
 import type { DiffHunk } from "../../../core/src/diff/types";
+import {
+  buildFileHistory,
+  filterFileHistoryPaths,
+  type FileHistoryEntry,
+  type FileHistoryIndex,
+} from "../history/file-history";
 import { t } from "../i18n";
 import { renderHunk, type DiffMode } from "./diff-renderer";
 import { renderCjkWrappedText } from "./cjk-wrap-renderer";
@@ -18,6 +24,8 @@ export class ReviewGateView extends ItemView {
   private selectedChangeId: string | null = null;
   private mode: DiffMode = "split";
   private hunkIndex = 0;
+  private selectedHistoryPath: string | null = null;
+  private historyQuery = "";
   private renderGeneration = 0;
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!event.altKey || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
@@ -58,6 +66,15 @@ export class ReviewGateView extends ItemView {
     this.contentEl.empty();
   }
 
+  public async showFileHistory(vaultPath: string): Promise<void> {
+    this.tab = "history";
+    this.selectedReviewId = null;
+    this.selectedChangeId = null;
+    this.selectedHistoryPath = vaultPath.replace(/\\/gu, "/");
+    this.historyQuery = this.selectedHistoryPath;
+    await this.refresh();
+  }
+
   public async refresh(): Promise<void> {
     const generation = ++this.renderGeneration;
     try {
@@ -94,11 +111,20 @@ export class ReviewGateView extends ItemView {
       }
       return review.status === "pending" && review.conflict?.advisory !== true;
     });
+    const fileHistory = this.tab === "history" ? buildFileHistory(filtered) : null;
+    const historyEntries =
+      fileHistory !== null && this.selectedHistoryPath !== null
+        ? fileHistory.entriesFor(this.selectedHistoryPath)
+        : null;
+    const visibleReviews = historyEntries?.map((entry) => entry.review) ?? filtered;
+    const historyEntryByReview = new Map(
+      historyEntries?.map((entry) => [entry.review.id, entry] as const) ?? [],
+    );
 
     this.contentEl.empty();
     const header = this.contentEl.createDiv({ cls: "obsreview-header" });
     header.createEl("h2", { text: t("reviewGate") });
-    header.createSpan({ cls: "obsreview-count", text: String(filtered.length) });
+    header.createSpan({ cls: "obsreview-count", text: String(visibleReviews.length) });
     const tabs = this.contentEl.createDiv({ cls: "obsreview-tabs" });
     for (const tab of ["pending", "conflicted", "history"] as const) {
       const button = tabs.createEl("button", {
@@ -108,15 +134,23 @@ export class ReviewGateView extends ItemView {
       button.addEventListener("click", () => {
         this.tab = tab;
         this.selectedReviewId = null;
+        if (tab !== "history") {
+          this.selectedHistoryPath = null;
+          this.historyQuery = "";
+        }
         void this.refresh();
       });
     }
 
-    if (filtered.length === 0) {
+    if (fileHistory !== null) this.renderHistoryPicker(fileHistory);
+
+    if (visibleReviews.length === 0) {
       this.contentEl.createEl("p", {
         cls: "obsreview-empty",
         text:
-          this.tab === "history"
+          this.tab === "history" && this.selectedHistoryPath !== null
+            ? t("noFileHistory")
+            : this.tab === "history"
             ? t("noCompletedReviews")
             : this.tab === "conflicted"
               ? t("noConflictedReviews")
@@ -126,7 +160,8 @@ export class ReviewGateView extends ItemView {
     }
 
     const list = this.contentEl.createDiv({ cls: "obsreview-list" });
-    for (const review of filtered) {
+    for (const review of visibleReviews) {
+      const historyEntry = historyEntryByReview.get(review.id);
       const card = list.createDiv({ cls: "obsreview-card" });
       card.tabIndex = 0;
       const heading = card.createDiv({ cls: "obsreview-card-heading" });
@@ -138,21 +173,13 @@ export class ReviewGateView extends ItemView {
             ? t("potentialConflict")
             : statusLabel(review.status),
       });
-      card.createEl("div", {
-        cls: "obsreview-card-target",
-        text:
-          review.changes.length === 1
-            ? review.changes[0]?.target ?? t("unknownTarget")
-            : t(review.changes.length === 1 ? "oneFile" : "manyFiles", {
-                count: review.changes.length,
-              }),
-      });
+      this.renderCardTarget(card, review, historyEntry);
       const source = sourceLabel(review);
       card.createEl("small", {
-        text: `${source} · ${t("revisionInline", { revision: review.revision })} · ${formatRelative(review.updatedAt)}`,
+        text: `${source} · ${t("revisionInline", { revision: review.revision })} · ${review.updatedAt}`,
       });
       const open = (): void => {
-        const firstChange = review.changes[0];
+        const firstChange = historyEntry?.change ?? review.changes[0];
         this.selectedReviewId = review.id;
         this.selectedChangeId = firstChange?.id ?? null;
         this.hunkIndex = 0;
@@ -163,6 +190,76 @@ export class ReviewGateView extends ItemView {
       card.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") open();
       });
+    }
+  }
+
+  private renderHistoryPicker(fileHistory: FileHistoryIndex): void {
+    const picker = this.contentEl.createDiv({ cls: "obsreview-history-picker" });
+    const heading = picker.createDiv({ cls: "obsreview-history-picker-heading" });
+    heading.createEl("strong", { text: t("fileHistory") });
+    addButton(
+      heading,
+      t("allReviews"),
+      () => {
+        this.selectedHistoryPath = null;
+        this.historyQuery = "";
+        void this.refresh();
+      },
+      this.selectedHistoryPath === null ? "is-active" : "",
+    );
+    const input = picker.createEl("input", {
+      type: "search",
+      attr: { placeholder: t("searchFileHistory") },
+    });
+    input.value = this.historyQuery;
+    input.setAttribute("aria-label", t("searchFileHistory"));
+    const results = picker.createDiv({ cls: "obsreview-history-paths" });
+    const renderResults = (): void => {
+      results.empty();
+      const paths = filterFileHistoryPaths(fileHistory.paths, this.historyQuery).slice(0, 20);
+      for (const path of paths) {
+        const button = results.createEl("button", {
+          cls: path === this.selectedHistoryPath ? "is-active" : "",
+        });
+        renderCjkWrappedText(button, path);
+        button.addEventListener("click", () => {
+          this.selectedHistoryPath = path;
+          this.historyQuery = path;
+          this.selectedReviewId = null;
+          this.selectedChangeId = null;
+          void this.refresh();
+        });
+      }
+    };
+    input.addEventListener("input", () => {
+      this.historyQuery = input.value;
+      renderResults();
+    });
+    renderResults();
+  }
+
+  private renderCardTarget(
+    card: HTMLElement,
+    review: Review,
+    historyEntry: FileHistoryEntry | undefined,
+  ): void {
+    const target = card.createDiv({ cls: "obsreview-card-target" });
+    if (historyEntry === undefined) {
+      renderCjkWrappedText(
+        target,
+        review.changes.length === 1
+          ? review.changes[0]?.target ?? t("unknownTarget")
+          : t(review.changes.length === 1 ? "oneFile" : "manyFiles", {
+              count: review.changes.length,
+            }),
+      );
+      return;
+    }
+    const change = historyEntry.change;
+    renderCjkWrappedText(target, `${operationLabel(change.operation)} · ${change.target}`);
+    if (change.newTarget !== undefined) {
+      target.append(" → ");
+      renderCjkWrappedText(target, change.newTarget);
     }
   }
 

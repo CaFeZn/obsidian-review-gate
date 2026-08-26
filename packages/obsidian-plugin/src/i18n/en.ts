@@ -42,6 +42,7 @@ export const EN_MESSAGES = {
   externalRefreshDeferred:
     "A newer review revision is available. Your unsaved proposal was preserved; save or resolve the revision conflict first.",
   externalAgent: "external agent",
+  fileHistory: "Modification history",
   fileDoesNotExist: "(file does not exist)",
   forceApply: "Force Apply",
   forceApplyDanger:
@@ -61,9 +62,11 @@ export const EN_MESSAGES = {
   manyFiles: "{count} files",
   nextHunk: "Next hunk",
   noCompletedReviews: "No completed reviews.",
+  noFileHistory: "No Review Gate history for this file.",
   noConflictedReviews: "No conflicted reviews.",
   noPendingReviews: "No pending reviews.",
   oneFile: "{count} file",
+  allReviews: "All reviews",
   openReviewGate: "Open Review Gate",
   operationCreate: "CREATE",
   operationDelete: "DELETE",
@@ -117,6 +120,7 @@ export const EN_MESSAGES = {
   revisionInline: "revision {revision}",
   revisionLabel: "Revision: {revision}",
   saveProposal: "Save proposal",
+  searchFileHistory: "Search reviewed file paths",
   split: "Split",
   statusApproved: "approved",
   statusCancelled: "cancelled",

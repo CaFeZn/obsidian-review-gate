@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { JsDiffEngine } from "../packages/core/src/diff/jsdiff-engine";
 import { cleanupVault, createVault, readVaultFile, writeVaultFile } from "./helpers";
 
 const projectRoot = path.resolve(__dirname, "..", "..");
@@ -101,6 +102,121 @@ test("CLI submit/status/update/cancel use one-line machine JSON and stable exit 
     assert.equal(cancel.status, 6);
     assert.equal(cancel.document["status"], "cancelled");
     assert.equal(await readVaultFile(vault, "Framework/CAN.md"), "base\n");
+  } finally {
+    await cleanupVault(reviewHome);
+    await cleanupVault(vault);
+  }
+});
+
+test("CLI update refuses target drift without mutating the proposal", async () => {
+  const vault = await createVault();
+  const reviewHome = await createVault();
+  try {
+    await writeVaultFile(vault, "note.md", "base\n");
+    const firstProposal = path.join(vault, "first.md");
+    const secondProposal = path.join(vault, "second.md");
+    await writeFile(firstProposal, "proposal one\n", "utf8");
+    await writeFile(secondProposal, "proposal two\n", "utf8");
+    const submit = runCli([
+      "submit",
+      "--vault",
+      vault,
+      "--target",
+      "note.md",
+      "--file",
+      firstProposal,
+      "--json",
+    ], reviewHome);
+    assert.equal(submit.status, 0, submit.stderr);
+    await writeVaultFile(vault, "note.md", "human edit\n");
+
+    const update = runCli([
+      "update",
+      String(submit.document["reviewId"]),
+      "--vault",
+      vault,
+      "--change",
+      "0001",
+      "--file",
+      secondProposal,
+      "--expected-revision",
+      "1",
+      "--json",
+    ], reviewHome);
+
+    assert.equal(update.status, 4);
+    assert.equal(update.document["code"], "REVIEW_CONFLICT");
+    const show = runCli([
+      "show",
+      String(submit.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(show.document["revision"], 1);
+    const change = (show.document["changes"] as Record<string, unknown>[])[0];
+    assert.equal(change?.["proposalContent"], "proposal one\n");
+    assert.equal(await readVaultFile(vault, "note.md"), "human edit\n");
+  } finally {
+    await cleanupVault(reviewHome);
+    await cleanupVault(vault);
+  }
+});
+
+test("CLI hunk refuses target drift without mutating hunk decisions", async () => {
+  const vault = await createVault();
+  const reviewHome = await createVault();
+  try {
+    const base = "one\ntwo\nthree\n";
+    const proposal = "one\nTWO\nthree\n";
+    await writeVaultFile(vault, "note.md", base);
+    const proposalFile = path.join(vault, "proposal.md");
+    await writeFile(proposalFile, proposal, "utf8");
+    const submit = runCli([
+      "submit",
+      "--vault",
+      vault,
+      "--target",
+      "note.md",
+      "--file",
+      proposalFile,
+      "--json",
+    ], reviewHome);
+    assert.equal(submit.status, 0, submit.stderr);
+    const hunk = new JsDiffEngine().diff(base, proposal).hunks[0];
+    assert.ok(hunk);
+    await writeVaultFile(vault, "note.md", "human edit\n");
+
+    const decision = runCli([
+      "hunk",
+      String(submit.document["reviewId"]),
+      "--vault",
+      vault,
+      "--change",
+      "0001",
+      "--hunk-id",
+      hunk.id,
+      "--decision",
+      "reject",
+      "--expected-revision",
+      "1",
+      "--json",
+    ], reviewHome);
+
+    assert.equal(decision.status, 4);
+    assert.equal(decision.document["code"], "REVIEW_CONFLICT");
+    const show = runCli([
+      "show",
+      String(submit.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(show.document["revision"], 1);
+    const change = (show.document["changes"] as Record<string, unknown>[])[0];
+    assert.equal(change?.["proposalContent"], proposal);
+    assert.deepEqual(change?.["hunkDecisions"], {});
+    assert.equal(await readVaultFile(vault, "note.md"), "human edit\n");
   } finally {
     await cleanupVault(reviewHome);
     await cleanupVault(vault);
@@ -340,17 +456,15 @@ test("CLI append creates a review only when no mutable review matches", async ()
   }
 });
 
-test("CLI append refuses ambiguous existing reviews without changing either proposal", async () => {
+test("CLI submit refuses a target already owned by a mutable review", async () => {
   const vault = await createVault();
   const reviewHome = await createVault();
   try {
     await writeVaultFile(vault, "note.md", "base\n");
     const firstProposal = path.join(vault, "first.md");
     const secondProposal = path.join(vault, "second.md");
-    const agentProposal = path.join(vault, "agent.md");
     await writeFile(firstProposal, "first\n", "utf8");
     await writeFile(secondProposal, "second\n", "utf8");
-    await writeFile(agentProposal, "agent\n", "utf8");
 
     const first = runCli([
       "submit",
@@ -373,34 +487,72 @@ test("CLI append refuses ambiguous existing reviews without changing either prop
       "--json",
     ], reviewHome);
     assert.equal(first.status, 0, first.stderr);
-    assert.equal(second.status, 0, second.stderr);
+    assert.equal(second.status, 4);
+    assert.equal(second.document["code"], "REVIEW_CONFLICT");
+    assert.match(String(second.document["message"]), /append/u);
 
-    const append = runCli([
-      "append",
+    const list = runCli(["list", "--vault", vault, "--json"], reviewHome);
+    assert.equal(list.document["count"], 1);
+    const show = runCli([
+      "show",
+      String(first.document["reviewId"]),
       "--vault",
       vault,
-      "--target",
-      "note.md",
-      "--file",
-      agentProposal,
       "--json",
     ], reviewHome);
-    assert.equal(append.status, 2);
-    assert.equal(append.document["code"], "INVALID_ARGUMENTS");
-
-    for (const [reviewId, expected] of [
-      [first.document["reviewId"], "first\n"],
-      [second.document["reviewId"], "second\n"],
-    ] as const) {
-      const show = runCli(["show", String(reviewId), "--vault", vault, "--json"], reviewHome);
-      const change = (show.document["changes"] as Record<string, unknown>[])[0];
-      assert.equal(change?.["proposalContent"], expected);
-    }
+    const change = (show.document["changes"] as Record<string, unknown>[])[0];
+    assert.equal(change?.["proposalContent"], "first\n");
   } finally {
     await cleanupVault(reviewHome);
     await cleanupVault(vault);
   }
 });
+
+test(
+  "CLI submit treats target casing as the same mutable path on Windows",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const vault = await createVault();
+    const reviewHome = await createVault();
+    try {
+      await writeVaultFile(vault, "note.md", "base\n");
+      const firstProposal = path.join(vault, "first.md");
+      const secondProposal = path.join(vault, "second.md");
+      await writeFile(firstProposal, "first\n", "utf8");
+      await writeFile(secondProposal, "second\n", "utf8");
+      const first = runCli([
+        "submit",
+        "--vault",
+        vault,
+        "--target",
+        "note.md",
+        "--file",
+        firstProposal,
+        "--json",
+      ], reviewHome);
+      assert.equal(first.status, 0, first.stderr);
+
+      const second = runCli([
+        "submit",
+        "--vault",
+        vault,
+        "--target",
+        "NOTE.md",
+        "--file",
+        secondProposal,
+        "--json",
+      ], reviewHome);
+
+      assert.equal(second.status, 4);
+      assert.equal(second.document["code"], "REVIEW_CONFLICT");
+      const list = runCli(["list", "--vault", vault, "--json"], reviewHome);
+      assert.equal(list.document["count"], 1);
+    } finally {
+      await cleanupVault(reviewHome);
+      await cleanupVault(vault);
+    }
+  },
+);
 
 test("CLI append reports overlapping edits without mutating the existing review", async () => {
   const vault = await createVault();
@@ -447,6 +599,68 @@ test("CLI append reports overlapping edits without mutating the existing review"
     const change = (show.document["changes"] as Record<string, unknown>[])[0];
     assert.equal(change?.["proposalContent"], "one\nHUMAN\nthree\n");
     assert.equal(show.document["revision"], 1);
+  } finally {
+    await cleanupVault(reviewHome);
+    await cleanupVault(vault);
+  }
+});
+
+test("CLI append refuses unrelated target drift without creating conflicted state", async () => {
+  const vault = await createVault();
+  const reviewHome = await createVault();
+  try {
+    await writeVaultFile(vault, "A.md", "one\ntwo\nthree\n");
+    await writeVaultFile(vault, "B.md", "B0\n");
+    await writeFile(path.join(vault, "a-human.md"), "one\nHUMAN\ntwo\nthree\n", "utf8");
+    await writeFile(path.join(vault, "a-agent.md"), "ZERO\none\ntwo\nthree\n", "utf8");
+    await writeFile(path.join(vault, "b-proposal.md"), "B1\n", "utf8");
+    const manifest = path.join(vault, "review.json");
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        changes: [
+          { target: "A.md", file: "a-human.md" },
+          { target: "B.md", file: "b-proposal.md" },
+        ],
+      }),
+      "utf8",
+    );
+    const submit = runCli([
+      "submit",
+      "--vault",
+      vault,
+      "--manifest",
+      manifest,
+      "--json",
+    ], reviewHome);
+    assert.equal(submit.status, 0, submit.stderr);
+    await writeVaultFile(vault, "B.md", "human edit\n");
+
+    const append = runCli([
+      "append",
+      "--vault",
+      vault,
+      "--target",
+      "A.md",
+      "--file",
+      path.join(vault, "a-agent.md"),
+      "--json",
+    ], reviewHome);
+
+    assert.equal(append.status, 4);
+    assert.equal(append.document["code"], "REVIEW_CONFLICT");
+    const show = runCli([
+      "show",
+      String(submit.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(show.document["status"], "pending");
+    assert.equal(show.document["revision"], 1);
+    const changes = show.document["changes"] as Record<string, unknown>[];
+    assert.equal(changes[0]?.["proposalContent"], "one\nHUMAN\ntwo\nthree\n");
+    assert.equal(await readVaultFile(vault, "B.md"), "human edit\n");
   } finally {
     await cleanupVault(reviewHome);
     await cleanupVault(vault);

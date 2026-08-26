@@ -45,7 +45,8 @@ export async function createNativeMarkdownPair(
   app: App,
   request: NativeEditorPairRequest,
 ): Promise<NativeEditorPair> {
-  const { baseLeaf, proposalLeaf } = createMainWindowReviewLeaves(app.workspace);
+  const reviewLeaves = createMainWindowReviewLeaves(app.workspace);
+  const { baseLeaf, proposalLeaf } = reviewLeaves;
   let closePair = (): void => undefined;
   let saveFromCommand = (): void => undefined;
   const baseView = new ReviewMarkdownView(
@@ -152,8 +153,7 @@ export async function createNativeMarkdownPair(
     proposalLeaf.updateHeader();
   } catch (error) {
     diffController?.destroy();
-    proposalLeaf.detach();
-    baseLeaf.detach();
+    await reviewLeaves.release(true, true);
     throw error;
   }
 
@@ -162,8 +162,9 @@ export async function createNativeMarkdownPair(
     if (closed) return;
     closed = true;
     diffController?.destroy();
-    if (isNativeViewMounted(proposalView.containerEl)) proposalLeaf.detach();
-    if (isNativeViewMounted(baseView.containerEl)) baseLeaf.detach();
+    const baseOwned = isNativeViewMounted(baseView.containerEl);
+    const proposalOwned = isNativeViewMounted(proposalView.containerEl);
+    void reviewLeaves.release(baseOwned, proposalOwned);
     request.onClose();
   };
   return {

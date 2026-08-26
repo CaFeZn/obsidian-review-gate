@@ -43,6 +43,7 @@
 }
 
 .obsreview-tabs button.is-active,
+.obsreview-history-picker button.is-active,
 .obsreview-review-actions button.is-active,
 .obsreview-file-list button.is-active {
   background: var(--interactive-accent);
@@ -54,6 +55,43 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.obsreview-history-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.obsreview-history-picker-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obsreview-history-picker-heading strong {
+  flex: 1;
+}
+
+.obsreview-history-picker input {
+  width: 100%;
+}
+
+.obsreview-history-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.obsreview-history-paths button {
+  width: 100%;
+  height: auto;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .obsreview-card {

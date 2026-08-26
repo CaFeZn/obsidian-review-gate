@@ -91,6 +91,14 @@ export class ReviewService {
   }
 
   public async submit(input: SubmitReviewInput): Promise<Review> {
+    const submissionLock = path.join(
+      reviewLayout(this.store.storageBase).locks,
+      "submit-targets.lock",
+    );
+    return withDirectoryLock(submissionLock, () => this.submitLocked(input));
+  }
+
+  private async submitLocked(input: SubmitReviewInput): Promise<Review> {
     if (input.changes.length === 0) {
       throw new ReviewError("INVALID_ARGUMENTS", "A review must contain at least one change.");
     }
@@ -169,6 +177,8 @@ export class ReviewService {
       }
       changes.push(change);
     }
+
+    await this.assertTargetsAvailable(changes);
 
     const now = new Date().toISOString();
     const review: Review = {
@@ -283,6 +293,7 @@ export class ReviewService {
       const review = await this.loadAndReconcile(reviewId);
       assertMutable(review);
       assertExpectedRevision(review, input.expectedRevision);
+      await this.assertConflictFree(review);
       const change = review.changes.find((candidate) => candidate.id === input.changeId);
       if (change === undefined) {
         throw new ReviewError("CHANGE_NOT_FOUND", `Change not found: ${input.changeId}`, {
@@ -317,6 +328,7 @@ export class ReviewService {
       const review = await this.loadAndReconcile(reviewId);
       assertMutable(review);
       assertExpectedRevision(review, input.expectedRevision);
+      await this.assertConflictFree(review);
       const change = review.changes.find((candidate) => candidate.id === input.changeId);
       if (change === undefined) {
         throw new ReviewError("CHANGE_NOT_FOUND", `Change not found: ${input.changeId}`, {
@@ -525,6 +537,52 @@ export class ReviewService {
     return next;
   }
 
+  private async assertTargetsAvailable(changes: readonly ReviewChange[]): Promise<void> {
+    const incomingPaths = new Set<string>();
+    for (const change of changes) {
+      incomingPaths.add(change.target);
+      if (change.newTarget !== undefined) incomingPaths.add(change.newTarget);
+    }
+    const mutable = await this.list({
+      locations: ["pending"],
+      statuses: ["pending", "conflicted"],
+    });
+    const collisions = mutable.filter((review) =>
+      review.changes.some(
+        (change) =>
+          [...incomingPaths].some(
+            (incomingPath) =>
+              sameTarget(change.target, incomingPath) ||
+              (change.newTarget !== undefined && sameTarget(change.newTarget, incomingPath)),
+          ),
+      ),
+    );
+    if (collisions.length === 0) return;
+    throw new ReviewError(
+      "REVIEW_CONFLICT",
+      "One or more targets already belong to a mutable review. Use append to merge into the existing review.",
+      {
+        targets: [...incomingPaths].sort(),
+        reviewIds: collisions.map((review) => review.id),
+        command: "append",
+      },
+    );
+  }
+
+  private async assertConflictFree(review: Review): Promise<void> {
+    const inspection = await inspectReviewConflicts(this.vaultRoot, review);
+    if (inspection.conflicts.length === 0) return;
+    throw new ReviewError(
+      "REVIEW_CONFLICT",
+      "Review targets changed after submission. Run rebase before writing the proposal.",
+      {
+        reviewId: review.id,
+        changeIds: inspection.conflicts.map((conflict) => conflict.changeId),
+        command: "rebase",
+      },
+    );
+  }
+
   private async mergeProposalIntoReview(
     reviewId: string,
     target: string,
@@ -594,23 +652,19 @@ export class ReviewService {
         replaceChange(review.changes, mergedChange),
       );
       const inspection = await inspectReviewConflicts(this.vaultRoot, provisional);
-      let next: Review;
-      if (inspection.conflicts.length === 0) {
-        const { conflict: _conflict, ...rest } = provisional;
-        next = { ...rest, status: "pending" };
-      } else {
-        const first = inspection.conflicts[0];
-        next = {
-          ...provisional,
-          status: "conflicted",
-          conflict: {
-            detectedAt: new Date().toISOString(),
-            changeIds: inspection.conflicts.map((item) => item.changeId),
-            reason: first?.reason ?? "base-changed",
-            advisory: false,
+      if (inspection.conflicts.length > 0) {
+        throw new ReviewError(
+          "REVIEW_CONFLICT",
+          "Review contains unresolved target changes. Run rebase before appending.",
+          {
+            reviewId,
+            changeIds: inspection.conflicts.map((conflict) => conflict.changeId),
+            command: "rebase",
           },
-        };
+        );
       }
+      const { conflict: _conflict, ...rest } = provisional;
+      const next: Review = { ...rest, status: "pending" };
       await this.store.save(next);
       return next;
     });

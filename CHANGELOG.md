@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5 — 2026-08-26
+
+- Added per-file Review history from the Obsidian file menu, including approved rename chains and deleted or renamed historical paths.
+- Opened review base and proposal as new tabs inside existing left and right tab groups, preserving the original pages and restoring their editable state when review tabs close.
+- Refused duplicate mutable targets and target drift in Agent CLI `submit`, `update`, `append`, and `hunk` writes while preserving conflict review, rebase, and force-apply interactions.
+- Treated target paths case-insensitively for duplicate Review prevention on Windows.
+
 ## 0.1.4 — 2026-08-26
 
 - Opened native Markdown review panes as adjacent tab groups in the current Obsidian window instead of a separate operating-system window.

@@ -1,4 +1,10 @@
-import { Notice, Plugin, type TAbstractFile, type WorkspaceLeaf } from "obsidian";
+import {
+  Notice,
+  Plugin,
+  TFile,
+  type TAbstractFile,
+  type WorkspaceLeaf,
+} from "obsidian";
 import { ReviewService } from "../../core/src/service/review-service";
 import { installReviewFileSystem } from "../../core/src/storage/file-system";
 import { userDataReviewStorageBase } from "../../core/src/storage/user-data";
@@ -63,6 +69,17 @@ export default class ObsidianReviewGatePlugin extends Plugin {
       name: t("refreshReviewGate"),
       callback: () => void this.refreshViews(),
     });
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFile)) return;
+        menu.addItem((item) =>
+          item
+            .setTitle(t("fileHistory"))
+            .setIcon("history")
+            .onClick(() => void this.openFileHistory(file.path)),
+        );
+      }),
+    );
     this.watcher = new ReviewWatcher(storageBase, async () => {
       const activeReviewId = nativeEditor.activeReviewId();
       if (activeReviewId !== null) {
@@ -98,21 +115,27 @@ export default class ObsidianReviewGatePlugin extends Plugin {
     this.targetTimers.clear();
   }
 
-  private async openView(): Promise<void> {
+  private async openView(): Promise<ReviewGateView | null> {
     if (this.service === null) {
       new Notice(t("reviewUnavailable"));
-      return;
+      return null;
     }
     let leaf = this.app.workspace.getLeavesOfType(REVIEW_GATE_VIEW_TYPE)[0];
     if (leaf === undefined) {
       leaf = this.app.workspace.getRightLeaf(false) ?? undefined;
       if (leaf === undefined) {
         new Notice(t("targetLeafUnavailable"));
-        return;
+        return null;
       }
       await leaf.setViewState({ type: REVIEW_GATE_VIEW_TYPE, active: true });
     }
     await this.app.workspace.revealLeaf(leaf);
+    return leaf.view instanceof ReviewGateView ? leaf.view : null;
+  }
+
+  private async openFileHistory(vaultPath: string): Promise<void> {
+    const view = await this.openView();
+    if (view !== null) await view.showFileHistory(vaultPath);
   }
 
   private async refreshViews(): Promise<void> {
