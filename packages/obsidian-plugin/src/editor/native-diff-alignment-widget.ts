@@ -9,6 +9,7 @@ interface NativeAlignmentSpacerRequest {
   readonly hunk: DiffHunk;
   readonly changedLines: readonly DiffLine[];
   readonly spacerLines: number;
+  readonly alignmentKeys: readonly string[];
 }
 
 export function buildNativeAlignmentSpacerDecoration(
@@ -17,10 +18,16 @@ export function buildNativeAlignmentSpacerDecoration(
   const label = request.changedLines.length === 0 ? nativeHunkLabel(request.hunk) : undefined;
   const anchor = alignmentAnchor(request);
   return Decoration.widget({
-    widget: new NativeDiffAlignmentWidget(request.side, request.spacerLines, label),
+    widget: new NativeDiffAlignmentWidget(
+      request.side,
+      request.spacerLines,
+      request.alignmentKeys,
+      label,
+    ),
     block: true,
     side: anchor.side,
     obsreviewSpacerLines: request.spacerLines,
+    obsreviewAlignmentKeys: request.alignmentKeys,
     obsreviewHunkLabel: label,
   }).range(anchor.position);
 }
@@ -29,6 +36,7 @@ class NativeDiffAlignmentWidget extends WidgetType {
   public constructor(
     private readonly side: NativeDiffSide,
     private readonly spacerLines: number,
+    private readonly alignmentKeys: readonly string[],
     private readonly label: string | undefined,
   ) {
     super();
@@ -39,6 +47,8 @@ class NativeDiffAlignmentWidget extends WidgetType {
       widget instanceof NativeDiffAlignmentWidget &&
       widget.side === this.side &&
       widget.spacerLines === this.spacerLines &&
+      widget.alignmentKeys.length === this.alignmentKeys.length &&
+      widget.alignmentKeys.every((key, index) => key === this.alignmentKeys[index]) &&
       widget.label === this.label
     );
   }
@@ -59,6 +69,10 @@ class NativeDiffAlignmentWidget extends WidgetType {
     for (let index = 0; index < this.spacerLines; index += 1) {
       const line = document.createElement("div");
       line.className = "cm-line obsreview-native-spacer-line";
+      const alignmentKey = this.alignmentKeys[index];
+      if (alignmentKey !== undefined) {
+        line.setAttribute("data-obsreview-align-key", alignmentKey);
+      }
       line.textContent = "\u200b";
       container.appendChild(line);
     }

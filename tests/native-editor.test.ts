@@ -100,6 +100,41 @@ test("native editor renders unequal-hunk alignment as block widgets", () => {
   );
 });
 
+test("native editor gives both sides matching visual alignment keys", () => {
+  const base = "top\nold\nend\n";
+  const proposal = "top\nnew one\nnew two\nnew three\nend\n";
+  const collectAlignmentKeys = (
+    documentText: string,
+    side: "base" | "proposal",
+  ): readonly string[] => {
+    const documentValue = EditorState.create({ doc: documentText }).doc;
+    const decorations = buildNativeDiffDecorations(documentValue, { base, proposal, side });
+    const keys: string[] = [];
+    decorations.between(0, documentValue.length, (_from, _to, value) => {
+      const spec: unknown = value.spec;
+      if (spec === null || typeof spec !== "object") return;
+      const attributes: unknown = Reflect.get(spec, "attributes");
+      if (attributes !== null && typeof attributes === "object") {
+        const key = Reflect.get(attributes, "data-obsreview-align-key");
+        if (typeof key === "string") keys.push(key);
+      }
+      const spacerKeys = Reflect.get(spec, "obsreviewAlignmentKeys");
+      if (!Array.isArray(spacerKeys)) return;
+      for (const key of spacerKeys) {
+        if (typeof key === "string") keys.push(key);
+      }
+    });
+    return keys;
+  };
+
+  const baseKeys = collectAlignmentKeys(base, "base");
+  const proposalKeys = collectAlignmentKeys(proposal, "proposal");
+
+  assert.equal(baseKeys.length, 3);
+  assert.deepEqual(baseKeys, proposalKeys);
+  assert.equal(new Set(baseKeys).size, 3);
+});
+
 test("native editor keeps a short CJK changed phrase with its punctuation", () => {
   // Given: a short changed phrase enclosed by Chinese quotes at a narrow-wrap boundary.
   const base = "第一处旧内容：原生编辑器还没有按变更块高亮这一行，也看不出“旧内容”。\n";

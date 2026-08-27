@@ -37,6 +37,7 @@ interface NativeDiffDecorationContext {
 interface NativeChangedLineDecoration {
   readonly hunk: DiffHunk;
   readonly line: DiffLine;
+  readonly alignmentKey: string;
   readonly first: boolean;
   readonly last: boolean;
 }
@@ -69,6 +70,7 @@ export function buildNativeDiffDecorations(
             hunk,
             changedLines: lines,
             spacerLines,
+            alignmentKeys: alignmentKeys(hunk, lines.length, spacerLines),
           }),
         );
       }
@@ -82,6 +84,7 @@ export function buildNativeDiffDecorations(
         {
           hunk,
           line,
+          alignmentKey: nativeAlignmentKey(hunk, index),
           first: index === 0,
           last: index === lines.length - 1 && spacerLines === 0,
         },
@@ -95,6 +98,7 @@ export function buildNativeDiffDecorations(
           hunk,
           changedLines: lines,
           spacerLines,
+          alignmentKeys: alignmentKeys(hunk, lines.length, spacerLines),
         }),
       );
     }
@@ -115,7 +119,10 @@ function addChangedLineDecoration(
   ];
   if (change.first) classes.push("obsreview-native-hunk-start");
   if (change.last) classes.push("obsreview-native-hunk-end");
-  const attributes: Record<string, string> = { class: classes.join(" ") };
+  const attributes: Record<string, string> = {
+    class: classes.join(" "),
+    "data-obsreview-align-key": change.alignmentKey,
+  };
   if (change.first) attributes["data-obsreview-hunk"] = nativeHunkLabel(change.hunk);
   context.ranges.push(Decoration.line({ attributes }).range(documentLine.from));
   addInlineDecorations(
@@ -138,9 +145,22 @@ function addAnchorDecoration(
       attributes: {
         class: "obsreview-native-hunk-anchor obsreview-native-hunk-start obsreview-native-hunk-end",
         "data-obsreview-hunk": nativeHunkLabel(hunk),
+        "data-obsreview-align-key": nativeAlignmentKey(hunk, 0),
       },
     }).range(line.from),
   );
+}
+
+function alignmentKeys(
+  hunk: DiffHunk,
+  start: number,
+  count: number,
+): readonly string[] {
+  return Array.from({ length: count }, (_, index) => nativeAlignmentKey(hunk, start + index));
+}
+
+function nativeAlignmentKey(hunk: DiffHunk, index: number): string {
+  return `${hunk.id}:${index}`;
 }
 
 function addInlineDecorations(

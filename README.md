@@ -22,11 +22,11 @@ Vault
 
 ## 当前版本
 
-- 版本：`0.1.5`
+- 版本：`0.1.6`
 - Obsidian：桌面版，`1.5.0+`
 - CLI：Node.js `20+`
 - 状态：可通过 GitHub Release / BRAT 安装的公开第一版
-- 测试：92 项自动测试、CLI 端到端 smoke、插件单文件加载 smoke、独立发布包解压验收
+- 测试：107 项自动测试、CLI 端到端 smoke、插件单文件加载 smoke、独立发布包解压验收
 
 ## 已实现能力
 
@@ -76,7 +76,7 @@ Vault
 1. 在 Obsidian 的第三方插件市场安装并启用 **BRAT**；
 2. 执行命令 `BRAT: Add a beta plugin for testing`；
 3. 输入仓库地址 `https://github.com/CaFeZn/obsidian-review-gate`；
-4. 选择最新版本或固定版本 `0.1.5`；
+4. 选择最新版本或固定版本 `0.1.6`；
 5. 安装完成后启用 **Obsidian Review Gate**。
 
 BRAT 会从 GitHub Release 下载 `main.js`、`manifest.json` 和 `styles.css`。Release tag、Release name 与 `manifest.json` 中的版本必须一致。

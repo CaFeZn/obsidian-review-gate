@@ -8,6 +8,10 @@ import {
   bindNativeScrollContainers,
   isNativeScrollContainer,
 } from "./native-scroll-sync";
+import {
+  bindNativeVisualAlignment,
+  isNativeVisualAlignmentSurface,
+} from "./native-visual-alignment";
 
 export { bindNativeDiffEditors } from "./native-diff-extension";
 export { planNativeDiffBlocks } from "./native-diff-plan";
@@ -32,12 +36,23 @@ export async function createNativeDiffPair(
   if (baseEditor === null || proposalEditor === null) {
     throw new Error("Obsidian native CodeMirror editor is unavailable.");
   }
+  if (
+    !isNativeVisualAlignmentSurface(baseEditor.scrollDOM) ||
+    !isNativeVisualAlignmentSurface(proposalEditor.scrollDOM)
+  ) {
+    throw new Error("Obsidian native CodeMirror layout surface is unavailable.");
+  }
 
   let blocks = planNativeDiffBlocks(content.base, content.proposal);
   const diffBinding = bindNativeDiffEditors(baseEditor, proposalEditor, content.base);
+  const visualAlignmentBinding = bindNativeVisualAlignment(
+    baseEditor.scrollDOM,
+    proposalEditor.scrollDOM,
+  );
   const scrollBinding = bindNativeScrollContainers(
     baseEditor.scrollDOM,
     proposalEditor.scrollDOM,
+    { anchors: visualAlignmentBinding.anchors },
   );
   return {
     focusHunk: (index) => {
@@ -50,6 +65,7 @@ export async function createNativeDiffPair(
     },
     destroy: () => {
       scrollBinding.destroy();
+      visualAlignmentBinding.destroy();
       diffBinding.destroy();
     },
   };

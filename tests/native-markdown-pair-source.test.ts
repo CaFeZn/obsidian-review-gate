@@ -116,6 +116,31 @@ test("native alignment block widgets are provided by a state field", async () =>
   );
 });
 
+test("native diff pairs apply measured row alignment to hunk scroll anchors", async () => {
+  const givenDiffSource = await readEditorSource("native-diff-decorations.ts");
+  const givenAlignmentSource = await readEditorSource("native-visual-alignment.ts");
+  const givenStyles = await readFile(
+    path.join(process.cwd(), "packages", "obsidian-plugin", "styles.css"),
+    "utf8",
+  );
+
+  assert.match(givenDiffSource, /bindNativeVisualAlignment/u);
+  assert.match(givenDiffSource, /anchors: visualAlignmentBinding\.anchors/u);
+  assert.match(givenDiffSource, /visualAlignmentBinding\.destroy\(\)/u);
+  assert.match(
+    givenAlignmentSource,
+    /attributes: true,[\s\S]*attributeFilter: \[ALIGNMENT_KEY_ATTRIBUTE\]/u,
+  );
+  assert.match(
+    givenStyles,
+    /\[data-obsreview-align-key\]::after[\s\S]*height: var\(--obsreview-alignment-extra, 0px\)/u,
+  );
+  assert.doesNotMatch(
+    givenStyles,
+    /\.obsreview-native-spacer-line\s*\{[^}]*[\r\n]\s*height:\s*1lh/u,
+  );
+});
+
 async function readEditorSource(filename: string): Promise<string> {
   return readFile(
     path.join(process.cwd(), "packages", "obsidian-plugin", "src", "editor", filename),

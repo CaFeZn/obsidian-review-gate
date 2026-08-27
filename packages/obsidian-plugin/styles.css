@@ -519,9 +519,15 @@
 }
 
 .obsreview-native-spacer-line {
-  height: 1lh;
   min-height: 1lh;
   white-space: pre;
+}
+
+.obsreview-native-base .cm-line[data-obsreview-align-key]::after,
+.obsreview-native-proposal .cm-line[data-obsreview-align-key]::after {
+  content: "";
+  display: block;
+  height: var(--obsreview-alignment-extra, 0px);
 }
 
 @container obsreview-native-proposal (max-width: 520px) {

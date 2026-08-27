@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6 — 2026-08-27
+
+- Aligned native review hunk rows by measured pixel height after soft wrapping, resizing, font layout changes, and proposal edits.
+- Synchronized native review scrolling between corresponding hunk anchors while preserving exact document endpoints.
+
 ## 0.1.5 — 2026-08-26
 
 - Added per-file Review history from the Obsidian file menu, including approved rename chains and deleted or renamed historical paths.

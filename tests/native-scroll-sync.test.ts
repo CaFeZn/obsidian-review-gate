@@ -107,6 +107,39 @@ test("native scroll sync maps unequal ranges by relative progress", () => {
   binding.destroy();
 });
 
+test("native scroll sync maps between corresponding hunk anchors", () => {
+  const base = new TestScrollContainer(1_100, 100);
+  const proposal = new TestScrollContainer(2_100, 100);
+  const anchors = [
+    { base: 300, proposal: 900 },
+    { base: 700, proposal: 1_500 },
+  ];
+  const binding = bindNativeScrollContainers(base, proposal, {
+    anchors: () => anchors,
+  });
+
+  base.scrollFromUser(300);
+  assert.equal(proposal.scrollTop, 900);
+  base.scrollFromUser(500);
+  assert.equal(proposal.scrollTop, 1_200);
+  proposal.scrollFromUser(1_500);
+  assert.equal(base.scrollTop, 700);
+  binding.destroy();
+});
+
+test("native scroll sync preserves the document bottom past the last usable anchor", () => {
+  const base = new TestScrollContainer(1_100, 100);
+  const proposal = new TestScrollContainer(2_100, 100);
+  const binding = bindNativeScrollContainers(base, proposal, {
+    anchors: () => [{ base: 1_100, proposal: 1_500 }],
+  });
+
+  base.scrollFromUser(1_000);
+
+  assert.equal(proposal.scrollTop, 2_000);
+  binding.destroy();
+});
+
 test("native scroll sync reads changed ranges and maps the bottom", () => {
   // Given: a bound pair whose editor heights change after CodeMirror measures content.
   const base = new TestScrollContainer(1_100, 100);
