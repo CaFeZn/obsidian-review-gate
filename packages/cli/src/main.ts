@@ -28,7 +28,7 @@ import {
   reviewDocument,
 } from "./output";
 
-const VERSION = "0.1.6";
+const VERSION = "0.1.7";
 
 export async function run(argv: readonly string[]): Promise<number> {
   const jsonRequested = argv.includes("--json") || argv.some((item) => item.startsWith("--json="));

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7 — 2026-08-27
+
+- Aligned unchanged native Markdown rows, including headings after hidden Properties, by adding stable equal-line anchors and measured before-row spacing.
+
 ## 0.1.6 — 2026-08-27
 
 - Aligned native review hunk rows by measured pixel height after soft wrapping, resizing, font layout changes, and proposal edits.

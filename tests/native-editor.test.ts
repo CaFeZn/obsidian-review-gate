@@ -130,9 +130,62 @@ test("native editor gives both sides matching visual alignment keys", () => {
   const baseKeys = collectAlignmentKeys(base, "base");
   const proposalKeys = collectAlignmentKeys(proposal, "proposal");
 
-  assert.equal(baseKeys.length, 3);
+  assert.equal(baseKeys.length, 5);
   assert.deepEqual(baseKeys, proposalKeys);
-  assert.equal(new Set(baseKeys).size, 3);
+  assert.equal(new Set(baseKeys).size, 5);
+});
+
+test("native editor gives unchanged headings matching visual alignment keys", () => {
+  const headings = ["## 目标", "## 范围", "## 验收标准", "## 20260826", "## 实现记录"];
+  const base = [
+    "---",
+    "title: same",
+    "dateModified: old",
+    "---",
+    headings[0],
+    "old goal",
+    headings[1],
+    "old scope",
+    headings[2],
+    "old acceptance",
+    headings[3],
+    "old day",
+    headings[4],
+    "old implementation",
+    "",
+  ].join("\n");
+  const proposal = base
+    .replace("dateModified: old", "dateModified: new")
+    .replace("old goal", "new goal")
+    .replace("old scope", "new scope")
+    .replace("old acceptance", "new acceptance")
+    .replace("old day", "new day")
+    .replace("old implementation", "new implementation");
+
+  const collectHeadingKeys = (
+    documentText: string,
+    side: "base" | "proposal",
+  ): Readonly<Record<string, string>> => {
+    const documentValue = EditorState.create({ doc: documentText }).doc;
+    const decorations = buildNativeDiffDecorations(documentValue, { base, proposal, side });
+    const keys: Record<string, string> = {};
+    decorations.between(0, documentValue.length, (from, _to, value) => {
+      const spec: unknown = value.spec;
+      if (spec === null || typeof spec !== "object") return;
+      const attributes: unknown = Reflect.get(spec, "attributes");
+      if (attributes === null || typeof attributes !== "object") return;
+      const key: unknown = Reflect.get(attributes, "data-obsreview-align-key");
+      const line = documentValue.lineAt(from).text;
+      if (typeof key === "string" && headings.includes(line)) keys[line] = key;
+    });
+    return keys;
+  };
+
+  const baseKeys = collectHeadingKeys(base, "base");
+  const proposalKeys = collectHeadingKeys(proposal, "proposal");
+
+  assert.deepEqual(Object.keys(baseKeys), headings);
+  assert.deepEqual(baseKeys, proposalKeys);
 });
 
 test("native editor keeps a short CJK changed phrase with its punctuation", () => {

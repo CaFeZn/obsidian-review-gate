@@ -523,6 +523,20 @@
   white-space: pre;
 }
 
+.obsreview-native-base
+  .cm-line[data-obsreview-align-key]:not([data-obsreview-hunk])::before,
+.obsreview-native-proposal
+  .cm-line[data-obsreview-align-key]:not([data-obsreview-hunk])::before {
+  content: "";
+  display: block;
+  height: var(--obsreview-alignment-before, 0px);
+}
+
+.obsreview-native-base .cm-line[data-obsreview-hunk]::before,
+.obsreview-native-proposal .cm-line[data-obsreview-hunk]::before {
+  margin-top: var(--obsreview-alignment-before, 0px);
+}
+
 .obsreview-native-base .cm-line[data-obsreview-align-key]::after,
 .obsreview-native-proposal .cm-line[data-obsreview-align-key]::after {
   content: "";

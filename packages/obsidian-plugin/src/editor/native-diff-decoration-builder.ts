@@ -2,6 +2,7 @@ import type { Range, Text } from "@codemirror/state";
 import { Decoration, type DecorationSet } from "@codemirror/view";
 import { JsDiffEngine } from "../../../core/src/diff/jsdiff-engine";
 import type { DiffHunk, DiffLine, InlineFragment } from "../../../core/src/diff/types";
+import { splitLinesPreserveEndings } from "../../../core/src/diff/text-lines";
 import {
   nativeChangedLines,
   nativeHunkLabel,
@@ -42,6 +43,12 @@ interface NativeChangedLineDecoration {
   readonly last: boolean;
 }
 
+interface NativeEqualLinePair {
+  readonly baseLine: number;
+  readonly proposalLine: number;
+  readonly alignmentKey: string;
+}
+
 export function buildNativeDiffDecorations(
   documentValue: Text,
   request: NativeDiffDecorationRequest,
@@ -53,7 +60,12 @@ export function buildNativeDiffDecorations(
     documentValue,
     side: request.side,
   };
-  for (const hunk of diffEngine.diff(request.base, request.proposal, { contextLines: 0 }).hunks) {
+  const hunks = diffEngine.diff(request.base, request.proposal, { contextLines: 0 }).hunks;
+  addEqualLineDecorations(
+    context,
+    equalLinePairs(request.base, request.proposal, hunks),
+  );
+  for (const hunk of hunks) {
     const baseLines = nativeChangedLines(hunk, "base");
     const proposalLines = nativeChangedLines(hunk, "proposal");
     const lines = request.side === "base" ? baseLines : proposalLines;
@@ -105,6 +117,55 @@ export function buildNativeDiffDecorations(
   }
   ranges.push(...buildNativeCjkWordDecorations(documentValue, context.cjkExclusions));
   return Decoration.set(ranges, true);
+}
+
+function addEqualLineDecorations(
+  context: NativeDiffDecorationContext,
+  pairs: readonly NativeEqualLinePair[],
+): void {
+  for (const pair of pairs) {
+    const lineNumber = context.side === "base" ? pair.baseLine : pair.proposalLine;
+    if (lineNumber > context.documentValue.lines) continue;
+    const line = context.documentValue.line(lineNumber);
+    context.ranges.push(
+      Decoration.line({
+        attributes: { "data-obsreview-align-key": pair.alignmentKey },
+      }).range(line.from),
+    );
+  }
+}
+
+function equalLinePairs(
+  base: string,
+  proposal: string,
+  hunks: readonly DiffHunk[],
+): readonly NativeEqualLinePair[] {
+  const pairs: NativeEqualLinePair[] = [];
+  let baseLine = 1;
+  let proposalLine = 1;
+  const appendUntil = (baseEnd: number, proposalEnd: number): void => {
+    const count = Math.min(baseEnd - baseLine, proposalEnd - proposalLine);
+    for (let index = 0; index < count; index += 1) {
+      const pairedBaseLine = baseLine + index;
+      const pairedProposalLine = proposalLine + index;
+      pairs.push({
+        baseLine: pairedBaseLine,
+        proposalLine: pairedProposalLine,
+        alignmentKey: `equal:${pairedBaseLine}:${pairedProposalLine}`,
+      });
+    }
+  };
+
+  for (const hunk of hunks) {
+    appendUntil(hunk.oldStart, hunk.newStart);
+    baseLine = hunk.oldStart + hunk.oldLines;
+    proposalLine = hunk.newStart + hunk.newLines;
+  }
+  appendUntil(
+    splitLinesPreserveEndings(base).length + 1,
+    splitLinesPreserveEndings(proposal).length + 1,
+  );
+  return pairs;
 }
 
 function addChangedLineDecoration(

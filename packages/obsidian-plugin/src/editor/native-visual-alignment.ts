@@ -1,5 +1,6 @@
 export interface NativeVisualAlignmentRow {
   readonly key: string;
+  readonly top: number;
   readonly bottom: number;
 }
 
@@ -9,6 +10,8 @@ export interface NativeScrollAnchorPair {
 }
 
 export interface NativePixelAlignmentPlan {
+  readonly baseBeforePixels: Readonly<Record<string, number>>;
+  readonly proposalBeforePixels: Readonly<Record<string, number>>;
   readonly baseExtraPixels: Readonly<Record<string, number>>;
   readonly proposalExtraPixels: Readonly<Record<string, number>>;
   readonly anchors: readonly NativeScrollAnchorPair[];
@@ -52,6 +55,18 @@ export interface NativeVisualAlignmentBindingOptions {
   readonly createMutationObserver?: (
     callback: () => void,
   ) => NativeVisualAlignmentObserver;
+  readonly createStyleSheet?: (
+    side: "base" | "proposal",
+    surface: NativeVisualAlignmentSurface,
+  ) => NativeVisualAlignmentStyleSheet;
+}
+
+export interface NativeVisualAlignmentStyleSheet {
+  update(
+    before: Readonly<Record<string, number>>,
+    after: Readonly<Record<string, number>>,
+  ): void;
+  destroy(): void;
 }
 
 interface NativeVisualAlignmentElement {
@@ -60,11 +75,12 @@ interface NativeVisualAlignmentElement {
     removeProperty(name: string): string;
   };
   getAttribute(name: string): string | null;
-  getBoundingClientRect(): { readonly bottom: number };
+  getBoundingClientRect(): { readonly top: number; readonly bottom: number };
 }
 
 const ALIGNMENT_SELECTOR = "[data-obsreview-align-key]";
 const ALIGNMENT_KEY_ATTRIBUTE = "data-obsreview-align-key";
+const ALIGNMENT_BEFORE_PROPERTY = "--obsreview-alignment-before";
 const ALIGNMENT_EXTRA_PROPERTY = "--obsreview-alignment-extra";
 
 export function bindNativeVisualAlignment(
@@ -77,6 +93,9 @@ export function bindNativeVisualAlignment(
   const cancelFrame = options.cancelFrame ?? ((handle: number) => cancelAnimationFrame(handle));
   const createResizeObserver = options.createResizeObserver ?? defaultResizeObserver;
   const createMutationObserver = options.createMutationObserver ?? defaultMutationObserver;
+  const createStyleSheet = options.createStyleSheet ?? defaultAlignmentStyleSheet;
+  const baseStyleSheet = createStyleSheet("base", base);
+  const proposalStyleSheet = createStyleSheet("proposal", proposal);
   let active = true;
   let frame: number | null = null;
   let anchors: readonly NativeScrollAnchorPair[] = [];
@@ -86,13 +105,27 @@ export function bindNativeVisualAlignment(
     if (!active) return;
     const baseElements = alignmentElements(base);
     const proposalElements = alignmentElements(proposal);
+    baseStyleSheet.update({}, {});
+    proposalStyleSheet.update({}, {});
     clearAlignmentExtras(baseElements);
     clearAlignmentExtras(proposalElements);
     const baseRows = measureAlignmentRows(base, baseElements);
     const proposalRows = measureAlignmentRows(proposal, proposalElements);
     const plan = planNativePixelAlignment(baseRows, proposalRows);
-    applyAlignmentExtras(baseElements, plan.baseExtraPixels);
-    applyAlignmentExtras(proposalElements, plan.proposalExtraPixels);
+    applyAlignmentExtras(baseElements, plan.baseBeforePixels, ALIGNMENT_BEFORE_PROPERTY);
+    applyAlignmentExtras(
+      proposalElements,
+      plan.proposalBeforePixels,
+      ALIGNMENT_BEFORE_PROPERTY,
+    );
+    applyAlignmentExtras(baseElements, plan.baseExtraPixels, ALIGNMENT_EXTRA_PROPERTY);
+    applyAlignmentExtras(
+      proposalElements,
+      plan.proposalExtraPixels,
+      ALIGNMENT_EXTRA_PROPERTY,
+    );
+    baseStyleSheet.update(plan.baseBeforePixels, plan.baseExtraPixels);
+    proposalStyleSheet.update(plan.proposalBeforePixels, plan.proposalExtraPixels);
     anchors = plan.anchors;
     const nextResizeTargets = new Set<object>([
       base,
@@ -135,6 +168,8 @@ export function bindNativeVisualAlignment(
       resizeObserver.disconnect();
       resizeTargets.clear();
       mutationObserver.disconnect();
+      baseStyleSheet.destroy();
+      proposalStyleSheet.destroy();
       base.removeEventListener("scroll", onScroll);
       proposal.removeEventListener("scroll", onScroll);
       clearAlignmentExtras(alignmentElements(base));
@@ -164,6 +199,8 @@ export function planNativePixelAlignment(
   proposalRows: readonly NativeVisualAlignmentRow[],
 ): NativePixelAlignmentPlan {
   const proposalByKey = new Map(proposalRows.map((row) => [row.key, row]));
+  const baseBeforePixels: Record<string, number> = {};
+  const proposalBeforePixels: Record<string, number> = {};
   const baseExtraPixels: Record<string, number> = {};
   const proposalExtraPixels: Record<string, number> = {};
   const anchors: NativeScrollAnchorPair[] = [];
@@ -173,6 +210,17 @@ export function planNativePixelAlignment(
   for (const baseRow of baseRows) {
     const proposalRow = proposalByKey.get(baseRow.key);
     if (proposalRow === undefined) continue;
+    let baseTop = baseRow.top + baseOffset;
+    let proposalTop = proposalRow.top + proposalOffset;
+    if (baseTop < proposalTop) {
+      const extra = proposalTop - baseTop;
+      baseBeforePixels[baseRow.key] = extra;
+      baseOffset += extra;
+    } else if (proposalTop < baseTop) {
+      const extra = baseTop - proposalTop;
+      proposalBeforePixels[proposalRow.key] = extra;
+      proposalOffset += extra;
+    }
     let baseBottom = baseRow.bottom + baseOffset;
     let proposalBottom = proposalRow.bottom + proposalOffset;
     if (baseBottom < proposalBottom) {
@@ -189,7 +237,13 @@ export function planNativePixelAlignment(
     anchors.push({ base: baseBottom, proposal: proposalBottom });
   }
 
-  return { baseExtraPixels, proposalExtraPixels, anchors };
+  return {
+    baseBeforePixels,
+    proposalBeforePixels,
+    baseExtraPixels,
+    proposalExtraPixels,
+    anchors,
+  };
 }
 
 function alignmentElements(
@@ -204,34 +258,39 @@ function measureAlignmentRows(
   surface: NativeVisualAlignmentSurface,
   elements: readonly NativeVisualAlignmentElement[],
 ): readonly NativeVisualAlignmentRow[] {
-  const top = surface.getBoundingClientRect().top;
   const seen = new Set<string>();
   const rows: NativeVisualAlignmentRow[] = [];
   for (const element of elements) {
     const key = element.getAttribute(ALIGNMENT_KEY_ATTRIBUTE);
     if (key === null || seen.has(key)) continue;
-    const bottom = element.getBoundingClientRect().bottom - top + surface.scrollTop;
-    if (!Number.isFinite(bottom)) continue;
+    const rectangle = element.getBoundingClientRect();
+    const rowTop = rectangle.top + surface.scrollTop;
+    const bottom = rectangle.bottom + surface.scrollTop;
+    if (!Number.isFinite(rowTop) || !Number.isFinite(bottom)) continue;
     seen.add(key);
-    rows.push({ key, bottom });
+    rows.push({ key, top: rowTop, bottom });
   }
   return rows;
 }
 
 function clearAlignmentExtras(elements: readonly NativeVisualAlignmentElement[]): void {
-  for (const element of elements) element.style.removeProperty(ALIGNMENT_EXTRA_PROPERTY);
+  for (const element of elements) {
+    element.style.removeProperty(ALIGNMENT_BEFORE_PROPERTY);
+    element.style.removeProperty(ALIGNMENT_EXTRA_PROPERTY);
+  }
 }
 
 function applyAlignmentExtras(
   elements: readonly NativeVisualAlignmentElement[],
   extras: Readonly<Record<string, number>>,
+  property: string,
 ): void {
   const elementsByKey = new Map(
     elements.map((element) => [element.getAttribute(ALIGNMENT_KEY_ATTRIBUTE), element]),
   );
   for (const [key, extra] of Object.entries(extras)) {
     if (extra <= 0) continue;
-    elementsByKey.get(key)?.style.setProperty(ALIGNMENT_EXTRA_PROPERTY, `${extra}px`);
+    elementsByKey.get(key)?.style.setProperty(property, `${extra}px`);
   }
 }
 
@@ -272,4 +331,56 @@ function defaultMutationObserver(callback: () => void): NativeVisualAlignmentObs
       }),
     disconnect: () => observer.disconnect(),
   };
+}
+
+function defaultAlignmentStyleSheet(
+  side: "base" | "proposal",
+  surface: NativeVisualAlignmentSurface,
+): NativeVisualAlignmentStyleSheet {
+  const ownerDocument: unknown = Reflect.get(surface, "ownerDocument");
+  if (
+    ownerDocument === null ||
+    typeof ownerDocument !== "object" ||
+    typeof Reflect.get(ownerDocument, "createElement") !== "function"
+  ) {
+    return { update: () => undefined, destroy: () => undefined };
+  }
+  const style = (ownerDocument as Document).createElement("style");
+  (ownerDocument as Document).head.appendChild(style);
+  const scope = side === "base" ? ".obsreview-native-base" : ".obsreview-native-proposal";
+  return {
+    update: (before, after) => {
+      style.textContent = alignmentStyleRules(scope, before, after);
+    },
+    destroy: () => style.remove(),
+  };
+}
+
+function alignmentStyleRules(
+  scope: string,
+  before: Readonly<Record<string, number>>,
+  after: Readonly<Record<string, number>>,
+): string {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const rules: string[] = [];
+  for (const key of keys) {
+    const declarations: string[] = [];
+    const beforePixels = before[key];
+    const afterPixels = after[key];
+    if (beforePixels !== undefined && beforePixels > 0) {
+      declarations.push(`${ALIGNMENT_BEFORE_PROPERTY}: ${beforePixels}px`);
+    }
+    if (afterPixels !== undefined && afterPixels > 0) {
+      declarations.push(`${ALIGNMENT_EXTRA_PROPERTY}: ${afterPixels}px`);
+    }
+    if (declarations.length === 0) continue;
+    rules.push(
+      `${scope} .cm-line[${ALIGNMENT_KEY_ATTRIBUTE}="${escapeCssAttribute(key)}"] { ${declarations.join("; ")} }`,
+    );
+  }
+  return rules.join("\n");
+}
+
+function escapeCssAttribute(value: string): string {
+  return value.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"');
 }
