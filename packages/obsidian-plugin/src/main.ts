@@ -21,9 +21,13 @@ export default class ObsidianReviewGatePlugin extends Plugin {
   private service: ReviewService | null = null;
   private watcher: ReviewWatcher | null = null;
   private nativeEditor: NativeEditorCoordinator | null = null;
-  private targetTimers = new Map<string, NodeJS.Timeout>();
+  private pendingTargets = new Set<string>();
+  private targetTimer: NodeJS.Timeout | null = null;
+  private inspectingTargets = false;
+  private targetInspectionStopped = false;
 
   public override async onload(): Promise<void> {
+    this.targetInspectionStopped = false;
     const getBasePath = this.app.vault.adapter.getBasePath;
     if (typeof getBasePath !== "function") {
       new Notice(t("desktopRequired"));
@@ -111,8 +115,10 @@ export default class ObsidianReviewGatePlugin extends Plugin {
     this.watcher = null;
     this.nativeEditor?.close();
     this.nativeEditor = null;
-    for (const timer of this.targetTimers.values()) clearTimeout(timer);
-    this.targetTimers.clear();
+    this.targetInspectionStopped = true;
+    if (this.targetTimer !== null) clearTimeout(this.targetTimer);
+    this.targetTimer = null;
+    this.pendingTargets.clear();
   }
 
   private async openView(): Promise<ReviewGateView | null> {
@@ -145,33 +151,45 @@ export default class ObsidianReviewGatePlugin extends Plugin {
   }
 
   private scheduleTargetInspection(vaultPath: string): void {
-    if (vaultPath === ".obsreview" || vaultPath.startsWith(".obsreview/")) return;
+    if (this.targetInspectionStopped) return;
     const normalized = vaultPath.replace(/\\/gu, "/");
-    const previous = this.targetTimers.get(normalized);
-    if (previous !== undefined) clearTimeout(previous);
-    this.targetTimers.set(
-      normalized,
-      setTimeout(() => {
-        this.targetTimers.delete(normalized);
-        void this.inspectTarget(normalized);
-      }, 200),
-    );
+    if (normalized === ".obsreview" || normalized.startsWith(".obsreview/")) return;
+    this.pendingTargets.add(normalized);
+    this.scheduleTargetBatch();
   }
 
-  private async inspectTarget(vaultPath: string): Promise<void> {
-    if (this.service === null) return;
+  private scheduleTargetBatch(): void {
+    if (this.inspectingTargets || this.targetInspectionStopped) return;
+    if (this.targetTimer !== null) clearTimeout(this.targetTimer);
+    this.targetTimer = setTimeout(() => {
+      this.targetTimer = null;
+      void this.inspectTargets();
+    }, 200);
+  }
+
+  private async inspectTargets(): Promise<void> {
+    if (this.service === null || this.targetInspectionStopped) return;
+    // 启动会产生数千个文件事件；每批只读取一次列表，并串行处理后续批次。
+    const targets = this.pendingTargets;
+    this.pendingTargets = new Set<string>();
+    this.inspectingTargets = true;
     try {
       const reviews = await this.service.list({ locations: ["pending"] });
       for (const review of reviews) {
+        if (this.targetInspectionStopped) return;
         const related = review.changes.some(
-          (change) => change.target === vaultPath || change.newTarget === vaultPath,
+          (change) => targets.has(change.target) ||
+            (change.newTarget !== undefined && targets.has(change.newTarget)),
         );
         if (related) await this.service.markPotentialConflict(review.id);
       }
-      await this.refreshViews();
+      if (!this.targetInspectionStopped) await this.refreshViews();
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       console.error("Obsidian Review Gate target watcher failed", error);
+    } finally {
+      this.inspectingTargets = false;
+      if (this.pendingTargets.size > 0) this.scheduleTargetBatch();
     }
   }
 
