@@ -696,3 +696,60 @@
     border-top: 1px solid var(--obsreview-border);
   }
 }
+
+/* Sidebar review page: the layout toggle sits in its own row and a narrow
+   sidebar stacks the two diff columns so they stay readable. */
+.obsreview-view-mode-toggle {
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+@container (max-width: 520px) {
+  .obsreview-view.is-auto-mode .obsreview-diff-split {
+    grid-template-columns: 1fr;
+  }
+
+  .obsreview-view.is-auto-mode .obsreview-split-cell.is-left {
+    border-right: 0;
+  }
+}
+
+/* Single-page native review view. */
+.obsreview-native-unified .view-content {
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.obsreview-native-unified-content {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 16px;
+  overflow-x: hidden;
+}
+
+.obsreview-native-unified-content .obsreview-hunks {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.obsreview-native-unified-diff {
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 16px;
+}
+
+.obsreview-native-unified-editor {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.obsreview-native-unified-editor .obsreview-cm6-host,
+.obsreview-native-unified-editor .obsreview-proposal-textarea {
+  min-height: 360px;
+}

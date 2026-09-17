@@ -3,6 +3,7 @@ import type {
   Review,
   ReviewChange,
 } from "../../../core/src/model/review";
+import type { DiffMode } from "../ui/diff-renderer";
 import type { ApplyResult } from "../../../core/src/patch/apply";
 import {
   ReviewEditingSession,
@@ -29,9 +30,14 @@ export interface NativeEditorPairRequest {
   readonly newTarget?: string;
   readonly baseContent: string;
   readonly proposalContent: string;
+  readonly mode: DiffMode;
   readonly editable: boolean;
   readonly onClose: () => void;
   readonly onSave: (proposalContent: string) => Promise<void>;
+  readonly onModeChange?: (
+    mode: DiffMode,
+    proposalContent?: string,
+  ) => Promise<void>;
   readonly onDecideHunk: (
     proposalContent: string,
     hunkIndex: number,
@@ -71,7 +77,11 @@ export class NativeEditorCoordinator {
 
   public constructor(private readonly options: NativeEditorCoordinatorOptions) {}
 
-  public async open(review: Review, change: ReviewChange): Promise<void> {
+  public async open(
+    review: Review,
+    change: ReviewChange,
+    mode: DiffMode = "split",
+  ): Promise<void> {
     const generation = ++this.generation;
     if (change.proposalContent === null) {
       this.disposeActive();
@@ -79,7 +89,7 @@ export class NativeEditorCoordinator {
     }
 
     const editable = review.status === "pending" || review.status === "conflicted";
-    const key = `${review.id}:${change.id}:${editable}:${change.proposalHash}`;
+    const key = `${review.id}:${change.id}:${editable}:${mode}:${change.proposalHash}`;
     if (this.active?.key === key && this.active.pair.isOpen()) {
       await this.active.pair.reveal();
       return;
@@ -94,6 +104,7 @@ export class NativeEditorCoordinator {
       ...(change.newTarget === undefined ? {} : { newTarget: change.newTarget }),
       baseContent: change.baseContent ?? "",
       proposalContent: change.proposalContent,
+      mode,
       editable,
       onClose: () => {
         if (generation !== this.generation) return;
@@ -104,6 +115,15 @@ export class NativeEditorCoordinator {
         session.updateDraft(change.id, proposalContent);
         if (!session.isDirty(change.id)) return;
         await this.options.operations.save(session, change.id);
+      },
+      onModeChange: async (nextMode, proposalContent) => {
+        if (proposalContent !== undefined) {
+          session.updateDraft(change.id, proposalContent);
+          if (session.isDirty(change.id)) {
+            await this.options.operations.save(session, change.id);
+          }
+        }
+        await this.open(review, change, nextMode);
       },
       onDecideHunk: async (proposalContent, hunkIndex, decision) => {
         session.updateDraft(change.id, proposalContent);

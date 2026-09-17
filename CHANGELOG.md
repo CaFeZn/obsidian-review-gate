@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9 — 2026-09-17
+
+- Restored the single-page native review view: the editable proposal can now open as one unified page instead of only a two-pane split, and it reuses the same review session, save, and close handling.
+- Added a layout toggle to the native proposal header so the split pair can switch to the single page in place.
+- Gave the sidebar review page and the native editor page independent layout controls, so changing one no longer implies the other.
+- Auto-selected the single-page layout when the sidebar review page is narrower than 520px, where two diff columns cannot stay readable, while keeping an explicit choice sticky.
+- Carried these additions onto 0.1.8 so rendered per-row diffs, scroll stability, Ctrl+S saving, and file history stay intact.
+
 ## 0.1.8 — 2026-09-17
 
 - Marked the exact changed rows and paragraphs inside rendered Markdown blocks instead of tinting a whole table or Callout, so a single edited table row no longer paints every sibling row.

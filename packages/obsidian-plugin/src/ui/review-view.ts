@@ -23,6 +23,9 @@ export class ReviewGateView extends ItemView {
   private selectedReviewId: string | null = null;
   private selectedChangeId: string | null = null;
   private mode: DiffMode = "split";
+  private modePreference: "auto" | DiffMode = "auto";
+  private nativeMode: DiffMode = "split";
+  private resizeObserver: ResizeObserver | null = null;
   private hunkIndex = 0;
   private selectedHistoryPath: string | null = null;
   private historyQuery = "";
@@ -36,7 +39,11 @@ export class ReviewGateView extends ItemView {
   public constructor(
     leaf: WorkspaceLeaf,
     private readonly service: ReviewService,
-    private readonly openNativeEditor: (review: Review, change: ReviewChange) => Promise<void>,
+    private readonly openNativeEditor: (
+      review: Review,
+      change: ReviewChange,
+      mode: DiffMode,
+    ) => Promise<void>,
     private readonly focusNativeHunk: (index: number) => void,
   ) {
     super(leaf);
@@ -58,10 +65,23 @@ export class ReviewGateView extends ItemView {
     this.contentEl.addClass("obsreview-view");
     this.contentEl.tabIndex = 0;
     this.contentEl.addEventListener("keydown", this.onKeyDown);
+    // A narrow sidebar cannot fit two readable diff columns, so the review page
+    // follows its own width until the reader picks a layout explicitly.
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.modePreference !== "auto") return;
+      const nextMode = this.autoMode();
+      if (nextMode === this.mode) return;
+      this.mode = nextMode;
+      void this.refresh();
+    });
+    this.resizeObserver.observe(this.contentEl);
+    this.mode = this.autoMode();
     await this.refresh();
   }
 
   public override onClose(): void {
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.contentEl.removeEventListener("keydown", this.onKeyDown);
     this.contentEl.empty();
   }
@@ -184,7 +204,9 @@ export class ReviewGateView extends ItemView {
         this.selectedChangeId = firstChange?.id ?? null;
         this.hunkIndex = 0;
         void this.refresh();
-        if (firstChange !== undefined) void this.openNativeEditor(review, firstChange);
+    if (firstChange !== undefined) {
+      void this.openNativeEditor(review, firstChange, this.nativeMode);
+    }
       };
       card.addEventListener("click", open);
       card.addEventListener("keydown", (event) => {
@@ -308,7 +330,7 @@ export class ReviewGateView extends ItemView {
       this.selectedChangeId = changeId;
       this.hunkIndex = 0;
       void this.refresh();
-      void this.openNativeEditor(review, selectChange(review, changeId));
+      void this.openNativeEditor(review, selectChange(review, changeId), this.nativeMode);
     });
 
     if (review.status === "conflicted" || review.conflict?.advisory === true) {
@@ -319,19 +341,28 @@ export class ReviewGateView extends ItemView {
     const mutable = review.status === "pending" || review.status === "conflicted";
     if (mutable && currentChange.proposalContent !== null) {
       addButton(actionBar, t("editProposal"), () =>
-        this.openNativeEditor(review, currentChange),
+        this.openNativeEditor(review, currentChange, this.nativeMode),
       );
     }
-    addToggle(actionBar, t("unified"), this.mode === "unified", () => {
+    addButton(actionBar, t("previousHunk"), () => this.moveHunk(-1));
+    addButton(actionBar, t("nextHunk"), () => this.moveHunk(1));
+
+    // The review page and the native editor page are separate surfaces, so this
+    // control only re-lays out the sidebar diff and leaves the native pair mode
+    // alone.
+    const effectiveMode = this.effectiveMode();
+    this.contentEl.toggleClass("is-auto-mode", this.modePreference === "auto");
+    const modeToolbar = this.contentEl.createDiv({ cls: "obsreview-view-mode-toggle" });
+    addToggle(modeToolbar, t("unified"), effectiveMode === "unified", () => {
+      this.modePreference = "unified";
       this.mode = "unified";
       void this.refresh();
     });
-    addToggle(actionBar, t("split"), this.mode === "split", () => {
+    addToggle(modeToolbar, t("split"), effectiveMode === "split", () => {
+      this.modePreference = "split";
       this.mode = "split";
       void this.refresh();
     });
-    addButton(actionBar, t("previousHunk"), () => this.moveHunk(-1));
-    addButton(actionBar, t("nextHunk"), () => this.moveHunk(1));
 
     const base = currentChange.baseContent ?? "";
     const proposal = currentChange.proposalContent ?? "";
@@ -475,7 +506,11 @@ export class ReviewGateView extends ItemView {
         expectedRevision: review.revision,
         actor: "obsidian-user",
       });
-      await this.openNativeEditor(updatedReview, selectChange(updatedReview, change.id));
+      await this.openNativeEditor(
+        updatedReview,
+        selectChange(updatedReview, change.id),
+        this.nativeMode,
+      );
       new Notice(
         decision === "accepted"
           ? t("hunkAccepted")
@@ -519,6 +554,15 @@ export class ReviewGateView extends ItemView {
     this.hunkIndex = (this.hunkIndex + delta + elements.length) % elements.length;
     elements[this.hunkIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
     this.focusNativeHunk(this.hunkIndex);
+  }
+
+  /** A narrow sidebar cannot show two readable columns. */
+  private autoMode(): DiffMode {
+    return this.contentEl.clientWidth <= 520 ? "unified" : "split";
+  }
+
+  private effectiveMode(): DiffMode {
+    return this.modePreference === "auto" ? this.autoMode() : this.modePreference;
   }
 }
 

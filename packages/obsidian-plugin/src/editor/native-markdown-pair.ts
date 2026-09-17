@@ -1,11 +1,17 @@
-import { MarkdownView, type App, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownView, type App, type WorkspaceLeaf } from "obsidian";
 import type { HunkDecisionKind } from "../../../core/src/model/review";
+import { JsDiffEngine } from "../../../core/src/diff/jsdiff-engine";
 import { t } from "../i18n";
+import { renderHunk } from "../ui/diff-renderer";
 import {
   createNativeDiffPair,
   planNativeDiffBlocks,
   type NativeDiffPairController,
 } from "./native-diff-decorations";
+import {
+  tryCreateMergeEditor,
+  type MergeEditorController,
+} from "./cm6-adapter";
 import type {
   NativeEditorPair,
   NativeEditorPairRequest,
@@ -46,6 +52,16 @@ class ReviewMarkdownView extends MarkdownView {
 }
 
 export async function createNativeMarkdownPair(
+  app: App,
+  request: NativeEditorPairRequest,
+): Promise<NativeEditorPair> {
+  if (request.mode === "unified") {
+    return createNativeUnifiedReview(app, request);
+  }
+  return createNativeSplitReview(app, request);
+}
+
+async function createNativeSplitReview(
   app: App,
   request: NativeEditorPairRequest,
 ): Promise<NativeEditorPair> {
@@ -128,6 +144,9 @@ export async function createNativeMarkdownPair(
     proposalView.setViewData(request.proposalContent, true);
     proposalView.containerEl.addClass("obsreview-native-proposal");
     if (request.editable) {
+      addProposalAction("layout", t("unified"), async () =>
+        request.onModeChange?.("unified", proposalView.getViewData()),
+      );
       addProposalAction("save", t("saveProposal"), () =>
         request.onSave(proposalView.getViewData()),
       );
@@ -182,6 +201,168 @@ export async function createNativeMarkdownPair(
       hunkIndex = index;
       diffController?.focusHunk(index);
     },
+    close: closePair,
+  };
+}
+
+class ReviewUnifiedView extends ItemView {
+  private proposalContent: string;
+  private diffHost: HTMLElement | null = null;
+  private editorController: MergeEditorController | null = null;
+
+  public constructor(
+    leaf: WorkspaceLeaf,
+    private readonly title: string,
+    private readonly request: NativeEditorPairRequest,
+    private readonly onClosed: () => void,
+  ) {
+    super(leaf);
+    this.proposalContent = request.proposalContent;
+  }
+
+  public override getViewType(): string {
+    return "obsidian-review-gate-unified";
+  }
+
+  public override getDisplayText(): string {
+    return this.title;
+  }
+
+  public override async onOpen(): Promise<void> {
+    this.containerEl.addClass("obsreview-native-unified");
+    if (this.request.editable) {
+      this.addAction("layout", t("split"), () =>
+        void this.request.onModeChange?.("split", this.getProposal()),
+      );
+      this.addAction("save", t("saveProposal"), () => void this.save());
+    }
+    this.render();
+  }
+
+  public override async onClose(): Promise<void> {
+    this.editorController?.destroy();
+    this.editorController = null;
+    this.onClosed();
+    await super.onClose();
+  }
+
+  public focusHunk(index: number): void {
+    const hunks = Array.from(this.contentEl.querySelectorAll<HTMLElement>(".obsreview-hunk"));
+    if (hunks.length === 0) return;
+    hunks[normalizeIndex(index, hunks.length)]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }
+
+  private render(): void {
+    this.contentEl.empty();
+    this.editorController?.destroy();
+    this.editorController = null;
+    const root = this.contentEl.createDiv({ cls: "obsreview-native-unified-content" });
+    const summary = root.createDiv({ cls: "obsreview-diff-summary" });
+    summary.createEl("code", { text: this.request.target });
+    if (this.request.newTarget !== undefined) {
+      summary.createSpan({ text: `→ ${this.request.newTarget}` });
+    }
+
+    const diff = new JsDiffEngine().diff(this.request.baseContent, this.proposalContent);
+    summary.createSpan({
+      text: t(diff.stats.hunkCount === 1 ? "diffSummaryOne" : "diffSummaryMany", {
+        added: diff.stats.addedLines,
+        removed: diff.stats.removedLines,
+        count: diff.stats.hunkCount,
+      }),
+    });
+    this.diffHost = root.createDiv({ cls: "obsreview-native-unified-diff" });
+    this.renderDiff();
+
+    const editorHost = root.createDiv({ cls: "obsreview-native-unified-editor" });
+    this.editorController = tryCreateMergeEditor(
+      editorHost,
+      this.request.baseContent,
+      this.proposalContent,
+      "unified",
+      (proposal) => {
+        this.proposalContent = proposal;
+        this.renderDiff();
+      },
+    );
+    if (this.editorController === null) {
+      const textarea = editorHost.createEl("textarea", { cls: "obsreview-proposal-textarea" });
+      textarea.value = this.proposalContent;
+      textarea.addEventListener("input", () => {
+        this.proposalContent = textarea.value;
+        this.renderDiff();
+      });
+    }
+  }
+
+  private renderDiff(): void {
+    if (this.diffHost === null) return;
+    this.diffHost.empty();
+    const diff = new JsDiffEngine().diff(this.request.baseContent, this.proposalContent);
+    const summary = this.diffHost.createDiv({ cls: "obsreview-diff-summary" });
+    summary.createSpan({
+      text: t(diff.stats.hunkCount === 1 ? "diffSummaryOne" : "diffSummaryMany", {
+        added: diff.stats.addedLines,
+        removed: diff.stats.removedLines,
+        count: diff.stats.hunkCount,
+      }),
+    });
+    const hunks = this.diffHost.createDiv({ cls: "obsreview-hunks" });
+    if (diff.hunks.length === 0) {
+      hunks.createEl("p", { cls: "obsreview-empty", text: t("proposalMatchesBase") });
+      return;
+    }
+    for (const hunk of diff.hunks) {
+      renderHunk({ parent: hunks, hunk, mode: "unified", callbacks: { readOnly: true } });
+    }
+  }
+
+  private getProposal(): string {
+    return this.editorController?.getProposal() ?? this.proposalContent;
+  }
+
+  private async save(): Promise<void> {
+    this.proposalContent = this.getProposal();
+    await this.request.onSave(this.proposalContent);
+  }
+}
+
+async function createNativeUnifiedReview(
+  app: App,
+  request: NativeEditorPairRequest,
+): Promise<NativeEditorPair> {
+  const leaf = app.workspace.getLeaf("tab");
+  let closePair = (): void => undefined;
+  const view = new ReviewUnifiedView(
+    leaf,
+    `${t(request.editable ? "editableProposal" : "proposal")} · ${request.newTarget ?? request.target}`,
+    request,
+    () => closePair(),
+  );
+  try {
+    await leaf.open(view);
+    leaf.updateHeader();
+  } catch (error) {
+    leaf.detach();
+    throw error;
+  }
+
+  let closed = false;
+  closePair = (): void => {
+    if (closed) return;
+    closed = true;
+    if (isNativeViewMounted(view.containerEl)) leaf.detach();
+    request.onClose();
+  };
+  return {
+    isOpen: () => !closed && isNativeViewMounted(view.containerEl),
+    reveal: async () => {
+      await app.workspace.revealLeaf(leaf);
+    },
+    focusHunk: (index) => view.focusHunk(index),
     close: closePair,
   };
 }

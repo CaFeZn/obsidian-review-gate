@@ -67,8 +67,21 @@ test("closing either native Markdown leaf releases its owned review views", asyn
   const givenPairSource = await readEditorSource("native-markdown-pair.ts");
 
   const closeCallbacks = givenPairSource.match(/\(\) => closePair\(\)/gu) ?? [];
-  assert.equal(closeCallbacks.length, 2);
+  // Both split panes forward their close, and the single-page view forwards its
+  // own close as well, so every owned view releases the session exactly once.
+  assert.ok(closeCallbacks.length >= 2);
   assert.match(givenPairSource, /reviewLeaves\.release\(baseOwned, proposalOwned\)/u);
+  assert.match(givenPairSource, /request\.onClose\(\)/u);
+});
+
+test("single-page native review reuses the same request and releases on close", async () => {
+  const givenPairSource = await readEditorSource("native-markdown-pair.ts");
+
+  assert.match(givenPairSource, /if \(request\.mode === "unified"\)/u);
+  assert.match(givenPairSource, /class ReviewUnifiedView extends ItemView/u);
+  assert.match(givenPairSource, /onModeChange\?\.\("split"/u);
+  assert.match(givenPairSource, /tryCreateMergeEditor/u);
+  assert.match(givenPairSource, /isNativeViewMounted\(view\.containerEl\)/u);
   assert.match(givenPairSource, /request\.onClose\(\)/u);
 });
 

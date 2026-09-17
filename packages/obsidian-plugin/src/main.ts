@@ -58,7 +58,7 @@ export default class ObsidianReviewGatePlugin extends Plugin {
         new ReviewGateView(
           leaf,
           opened.service,
-          (review, change) => nativeEditor.open(review, change),
+          (review, change, mode) => nativeEditor.open(review, change, mode),
           (index) => nativeEditor.focusHunk(index),
         ),
     );
