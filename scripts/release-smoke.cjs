@@ -13,7 +13,7 @@ const reviewHome = fs.mkdtempSync(path.join(os.tmpdir(), "obsreview-release-home
 const version = invoke(["--version", "--json"]);
 if (version.status !== 0) throw new Error(version.stderr || version.stdout);
 const versionDocument = JSON.parse(version.stdout);
-if (versionDocument.ok !== true || versionDocument.version !== "0.1.9") {
+if (versionDocument.ok !== true || versionDocument.version !== "0.1.10") {
   throw new Error(`Unexpected standalone CLI version output: ${version.stdout}`);
 }
 

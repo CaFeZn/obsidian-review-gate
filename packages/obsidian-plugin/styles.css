@@ -645,18 +645,19 @@
   color: var(--text-normal);
 }
 
-/* Only the rows or Callout paragraphs that carry a changed source line get the
-   strong side color. */
-.obsreview-native-base .cm-embed-block tr.obsreview-native-rendered-row > td,
-.obsreview-native-base .cm-embed-block tr.obsreview-native-rendered-row > th,
+/* Only the cells or Callout paragraphs whose own text changed get the strong
+   side color. A reformatted table changes every source line, so marking rows
+   would paint the whole table even when the cell text is identical. */
+.obsreview-native-base .cm-embed-block td.obsreview-native-rendered-row,
+.obsreview-native-base .cm-embed-block th.obsreview-native-rendered-row,
 .obsreview-native-base .cm-embed-block .callout-content > .obsreview-native-rendered-row {
   background: color-mix(in srgb, var(--color-red) 22%, transparent);
   box-shadow: inset 3px 0 0
     color-mix(in srgb, var(--color-red) 85%, transparent);
 }
 
-.obsreview-native-proposal .cm-embed-block tr.obsreview-native-rendered-row > td,
-.obsreview-native-proposal .cm-embed-block tr.obsreview-native-rendered-row > th,
+.obsreview-native-proposal .cm-embed-block td.obsreview-native-rendered-row,
+.obsreview-native-proposal .cm-embed-block th.obsreview-native-rendered-row,
 .obsreview-native-proposal .cm-embed-block .callout-content > .obsreview-native-rendered-row {
   background: color-mix(in srgb, var(--color-green) 22%, transparent);
   box-shadow: inset 3px 0 0

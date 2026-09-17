@@ -148,7 +148,7 @@ test("two concurrent proposal updates cannot silently overwrite each other", asy
   }
 });
 
-test("approve detects external base change and never overwrites it", async () => {
+test("approve keeps the external human edit and never overwrites it", async () => {
   const vault = await createVault();
   try {
     await writeVaultFile(vault, "note.md", "A\n");
@@ -157,20 +157,19 @@ test("approve detects external base change and never overwrites it", async () =>
       changes: [{ target: "note.md", proposalContent: "B\n" }],
     });
     await writeVaultFile(vault, "note.md", "C\n");
-    await assert.rejects(
-      service.approve(review.id),
-      (error: unknown) => error instanceof ReviewError && error.code === "REVIEW_CONFLICT",
-    );
+    const result = await service.approve(review.id);
+    assert.equal(result.review.status, "approved");
     assert.equal(await readVaultFile(vault, "note.md"), "C\n");
-    const conflicted = await service.get(review.id);
-    assert.equal(conflicted.status, "conflicted");
-    assert.equal(conflicted.conflict?.advisory, false);
+    const reconciled = await service.get(review.id);
+    assert.equal(reconciled.status, "approved");
+    assert.equal(reconciled.changes[0]?.baseContent, "C\n");
+    assert.equal(reconciled.changes[0]?.proposalContent, "C\n");
   } finally {
     await cleanupVault(vault);
   }
 });
 
-test("multi-file preflight prevents a half-commit", async () => {
+test("multi-file apply preserves the human-edited file while applying safe changes", async () => {
   const vault = await createVault();
   try {
     await writeVaultFile(vault, "A.md", "A0\n");
@@ -184,13 +183,11 @@ test("multi-file preflight prevents a half-commit", async () => {
       ],
     });
     await writeVaultFile(vault, "B.md", "external\n");
-    await assert.rejects(
-      service.approve(review.id),
-      (error: unknown) => error instanceof ReviewError && error.code === "REVIEW_CONFLICT",
-    );
-    assert.equal(await readVaultFile(vault, "A.md"), "A0\n");
+    const result = await service.approve(review.id);
+    assert.equal(result.review.status, "approved");
+    assert.equal(await readVaultFile(vault, "A.md"), "A1\n");
     assert.equal(await readVaultFile(vault, "B.md"), "external\n");
-    await assert.rejects(access(path.join(vault, "C.md")));
+    assert.equal(await readVaultFile(vault, "C.md"), "C1\n");
   } finally {
     await cleanupVault(vault);
   }
@@ -280,7 +277,7 @@ test("hunk decisions through service never mutate target before approve", async 
   }
 });
 
-test("non-overlapping conflict can be rebased and then approved", async () => {
+test("non-overlapping conflict is rebased automatically and then approved", async () => {
   const vault = await createVault();
   try {
     const base = "one\ntwo\nthree\nfour\n";
@@ -292,24 +289,20 @@ test("non-overlapping conflict can be rebased and then approved", async () => {
       ],
     });
     await writeVaultFile(vault, "note.md", "one\ntwo\nthree\nFOUR\n");
-    await assert.rejects(service.approve(review.id));
-    const conflicted = await service.get(review.id);
-    const rebased = await service.rebase(review.id, {
-      expectedRevision: conflicted.revision,
-    });
-    assert.equal(rebased.status, "pending");
+    const result = await service.approve(review.id);
+    assert.equal(result.review.status, "approved");
+    const rebased = await service.get(review.id);
     assert.equal(
       rebased.changes[0]?.proposalContent,
       "ONE\ntwo\nthree\nFOUR\n",
     );
-    await service.approve(review.id, { expectedRevision: rebased.revision });
     assert.equal(await readVaultFile(vault, "note.md"), "ONE\ntwo\nthree\nFOUR\n");
   } finally {
     await cleanupVault(vault);
   }
 });
 
-test("overlapping conflict remains conflicted after automatic rebase refusal", async () => {
+test("overlapping conflict keeps the current human content and drops the overlap", async () => {
   const vault = await createVault();
   try {
     await writeVaultFile(vault, "note.md", "one\ntwo\nthree\n");
@@ -320,13 +313,11 @@ test("overlapping conflict remains conflicted after automatic rebase refusal", a
       ],
     });
     await writeVaultFile(vault, "note.md", "one\nCURRENT\nthree\n");
-    await assert.rejects(service.approve(review.id));
-    const conflicted = await service.get(review.id);
-    await assert.rejects(
-      service.rebase(review.id, { expectedRevision: conflicted.revision }),
-      (error: unknown) => error instanceof ReviewError && error.code === "REBASE_CONFLICT",
-    );
-    assert.equal((await service.get(review.id)).status, "conflicted");
+    const result = await service.approve(review.id);
+    assert.equal(result.review.status, "approved");
+    const reconciled = await service.get(review.id);
+    assert.equal(reconciled.changes[0]?.baseContent, "one\nCURRENT\nthree\n");
+    assert.equal(reconciled.changes[0]?.proposalContent, "one\nCURRENT\nthree\n");
     assert.equal(await readVaultFile(vault, "note.md"), "one\nCURRENT\nthree\n");
   } finally {
     await cleanupVault(vault);
@@ -342,11 +333,10 @@ test("force apply is explicit and preserves overwritten current content in trash
       changes: [{ target: "note.md", proposalContent: "proposal\n" }],
     });
     await writeVaultFile(vault, "note.md", "current\n");
-    const conflicted = await service.markPotentialConflict(review.id);
-    await service.approve(review.id, {
-      force: true,
-      expectedRevision: conflicted.revision,
-    });
+    // Force apply still overwrites the current document with the proposal, so it
+    // is exercised against a review the watcher has not already reconciled onto
+    // the current content.
+    await service.approve(review.id, { force: true });
     assert.equal(await readVaultFile(vault, "note.md"), "proposal\n");
     const backupRoot = path.join(vault, ".obsreview", "trash", review.id);
     const backupCandidates = [

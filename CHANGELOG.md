@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.10 — 2026-09-17
+
+- Made human edits authoritative on conflict: when the document changed after submission, the current content becomes the new baseline instead of leaving the review conflicted.
+- Merged disjoint agent edits back on top of that new baseline, and dropped only the overlapping edits that cannot be represented safely.
+- Applied the same reconciliation on approve, on the target watcher, and on proposal or hunk writes, so a stale review resolves against the current document rather than refusing to proceed.
+- Kept the CLI target-drift guard: an update or hunk write against a changed target is still refused, because refusing a stale write never overwrites human content.
+- Marked changed table cells instead of whole rows: a reformatted table changes every source line while most cell text stays identical, so row-level marking painted the entire table, and only the edited cells are marked now.
+- Scheduled rendered-diff refreshes on a timer instead of an animation frame, because a review pane often renders while its window is backgrounded, where animation frames are throttled and the second pane stayed undecorated until the reader clicked it.
+- Resolved a rendered table widget to its table by line containment, because a widget does not always report the table's first row.
+
 ## 0.1.9 — 2026-09-17
 
 - Restored the single-page native review view: the editable proposal can now open as one unified page instead of only a two-pane split, and it reuses the same review session, save, and close handling.

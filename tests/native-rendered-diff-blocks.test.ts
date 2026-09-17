@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import {
   classifyNativeRenderedDiffBlock,
@@ -7,6 +9,7 @@ import {
   normalizeNativeRenderedText,
   planNativeRenderedChangedLines,
   planNativeRenderedDiffBlocks,
+  planNativeTableMarksByTable,
   type NativeRenderedDiffBlock,
 } from "../packages/obsidian-plugin/src/editor/native-rendered-diff-blocks";
 
@@ -127,6 +130,66 @@ test("rendered text normalization drops blockquote and list markers", () => {
   assert.equal(normalizeNativeRenderedText("| 22 | CAN_H |"), "22canh");
 });
 
+test("a reformatted table marks only the cells whose text changed", () => {
+  // Given: the same table reflowed so every source line differs, while only the
+  // third column of the second row actually changed content.
+  const base = [
+    "| 项 | 内容 |",
+    "| --- | --- |",
+    "| 输入范围 | 6~62 V | 需按更严格上限执行 |",
+    "| 最大电流 | 110 A | 未拆分测量上限 |",
+    "",
+  ].join("\n");
+  const proposal = [
+    "| 项       | 内容     | 备注                 |",
+    "| -------- | -------- | -------------------- |",
+    "| 输入范围 | 6~62 V   | 已超出 62 V 上限执行 |",
+    "| 最大电流 | 110 A    | 未拆分测量上限       |",
+    "",
+  ].join("\n");
+
+  // When: the rendered tables are compared cell by cell.
+  const marks = planNativeTableMarksByTable(base, proposal);
+
+  // Then: only the changed cells are marked; the reflowed but identical cells
+  // are not, on either side.
+  const expected = [
+    // The header's third column was renamed from 内容 to 备注.
+    [false, false, true],
+    [false, false, true],
+    [false, false, false],
+  ];
+  assert.deepEqual(marks.proposal.get(0)?.cells, expected);
+  assert.deepEqual(marks.base.get(0)?.cells, expected);
+});
+
+test("a wholly new table row is marked across its cells", () => {
+  // Given: the proposal adds a row that the base does not have.
+  const base = ["| 项 | 值 |", "| --- | --- |", "| 甲 | 1 |", ""].join("\n");
+  const proposal = [
+    "| 项 | 值 |",
+    "| --- | --- |",
+    "| 甲 | 1 |",
+    "| 乙 | 2 |",
+    "",
+  ].join("\n");
+
+  // When: the tables are compared cell by cell.
+  const marks = planNativeTableMarksByTable(base, proposal);
+
+  // Then: only the added row is marked on the proposal side, and the base side
+  // holds no mark at all.
+  assert.deepEqual(marks.proposal.get(0)?.cells, [
+    [false, false],
+    [false, false],
+    [true, true],
+  ]);
+  assert.deepEqual(marks.base.get(0)?.cells, [
+    [false, false],
+    [false, false],
+  ]);
+});
+
 test("aligned table columns with short delimiters still expand to the whole block", () => {
   // Given: an Obsidian-style aligned table whose delimiter row uses `--:` and
   // one-hyphen cells, as produced by the vault's own formatter.
@@ -148,4 +211,45 @@ test("aligned table columns with short delimiters still expand to the whole bloc
   assert.equal(classifyNativeRenderedDiffBlock(blocks, "proposal", 1)?.kind, "add");
   assert.equal(classifyNativeRenderedDiffBlock(blocks, "proposal", 4)?.kind, "add");
   assert.deepEqual(blocks[0]?.proposalLines, [1, 2, 3, 4, 5]);
+});
+
+test("the rendered diff decorator schedules refreshes without animation frames", async () => {
+  // Given: the decorator runs while a review pane may be backgrounded, where
+  // animation frames are throttled and a pending refresh would never run.
+  const source = await readFile(
+    path.join(
+      process.cwd(),
+      "packages",
+      "obsidian-plugin",
+      "src",
+      "editor",
+      "native-rendered-diff-blocks.ts",
+    ),
+    "utf8",
+  );
+
+  // Then: refreshes are scheduled on a timer, not on requestAnimationFrame, and
+  // cancellation matches the scheduler.
+  assert.match(source, /frame = setTimeout\(/u);
+  // No call site may schedule through an animation frame.
+  assert.doesNotMatch(source, /(?:window\.)?requestAnimationFrame\s*\(/u);
+  assert.match(source, /clearTimeout\(frame\)/u);
+});
+
+test("a rendered table is resolved by containment, not by its exact start line", async () => {
+  const source = await readFile(
+    path.join(
+      process.cwd(),
+      "packages",
+      "obsidian-plugin",
+      "src",
+      "editor",
+      "native-rendered-diff-blocks.ts",
+    ),
+    "utf8",
+  );
+
+  // Then: the widget line is matched against the table's line span, because a
+  // rendered table widget does not always report the table's first row.
+  assert.match(source, /line >= table\.startLine && line <= table\.endLine/u);
 });

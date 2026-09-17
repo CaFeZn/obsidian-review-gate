@@ -108,6 +108,129 @@ export function matchesNativeRenderedChangedText(
   });
 }
 
+export interface NativeTableCellMarks {
+  /** Per rendered row, which cells of that row differ. */
+  readonly cells: readonly (readonly boolean[])[];
+}
+
+export interface NativeTableCellMarksByTable {
+  /** Cell marks for each base table, aligned by table order. */
+  readonly base: ReadonlyMap<number, NativeTableCellMarks>;
+  /** Cell marks for each proposal table, aligned by table order. */
+  readonly proposal: ReadonlyMap<number, NativeTableCellMarks>;
+}
+
+export interface NativeTable {
+  /** 1-based first source line of the table. */
+  readonly startLine: number;
+  /** 1-based last source line of the table. */
+  readonly endLine: number;
+  /** Cell text per table row, with the delimiter row removed. */
+  readonly rows: readonly (readonly string[])[];
+}
+
+/**
+ * Parses every Markdown table in the document in order. The delimiter row is
+ * dropped so the row indexes line up with the rendered `tr` elements.
+ */
+export function parseNativeTables(source: string): readonly NativeTable[] {
+  const lines = source.split(/\r?\n/u);
+  const tables: NativeTable[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (!isTableRow(lines[index] ?? "")) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    while (index + 1 < lines.length && isTableRow(lines[index + 1] ?? "")) index += 1;
+    const end = index;
+    const block = lines.slice(start, end + 1);
+    if (block.some(isTableDelimiter)) {
+      const rows = block
+        .filter((line) => !isTableDelimiter(line))
+        .map(splitNativeTableRow);
+      tables.push({ startLine: start + 1, endLine: end + 1, rows });
+    }
+    index += 1;
+  }
+  return tables;
+}
+
+function splitNativeTableRow(line: string): readonly string[] {
+  return line
+    .trim()
+    .replace(/^\|/u, "")
+    .replace(/\|$/u, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+/**
+ * Compares base and proposal tables in order, cell by cell. Tables are paired by
+ * position so a row inserted anywhere in a table marks only that row, and cells
+ * whose text is unchanged stay neutral even when the whole table was reflowed.
+ */
+export function planNativeTableMarksByTable(
+  base: string,
+  proposal: string,
+): NativeTableCellMarksByTable {
+  const baseTables = parseNativeTables(base);
+  const proposalTables = parseNativeTables(proposal);
+  const baseMarks = new Map<number, NativeTableCellMarks>();
+  const proposalMarks = new Map<number, NativeTableCellMarks>();
+  const paired = Math.min(baseTables.length, proposalTables.length);
+
+  for (let index = 0; index < paired; index += 1) {
+    const baseRows = baseTables[index]?.rows ?? [];
+    const proposalRows = proposalTables[index]?.rows ?? [];
+    const rowCount = Math.max(baseRows.length, proposalRows.length);
+    const baseCells: boolean[][] = [];
+    const proposalCells: boolean[][] = [];
+    for (let row = 0; row < rowCount; row += 1) {
+      const before = baseRows[row];
+      const after = proposalRows[row];
+      if (before === undefined) {
+        // The base table has no such row at all, so it produces no mark for it.
+        proposalCells.push((after ?? []).map(() => true));
+        continue;
+      }
+      if (after === undefined) {
+        baseCells.push(before.map(() => true));
+        continue;
+      }
+      const width = Math.max(before.length, after.length);
+      const baseRow: boolean[] = [];
+      const proposalRow: boolean[] = [];
+      for (let column = 0; column < width; column += 1) {
+        const differs =
+          normalizeNativeRenderedText(before[column] ?? "") !==
+          normalizeNativeRenderedText(after[column] ?? "");
+        baseRow.push(differs);
+        proposalRow.push(differs);
+      }
+      baseCells.push(baseRow);
+      proposalCells.push(proposalRow);
+    }
+    baseMarks.set(index, { cells: baseCells });
+    proposalMarks.set(index, { cells: proposalCells });
+  }
+
+  // A table that exists on one side only is reported as fully added or removed.
+  for (let index = paired; index < baseTables.length; index += 1) {
+    baseMarks.set(index, {
+      cells: (baseTables[index]?.rows ?? []).map((row) => row.map(() => true)),
+    });
+  }
+  for (let index = paired; index < proposalTables.length; index += 1) {
+    proposalMarks.set(index, {
+      cells: (proposalTables[index]?.rows ?? []).map((row) => row.map(() => true)),
+    });
+  }
+
+  return { base: baseMarks, proposal: proposalMarks };
+}
+
 interface NativeRenderedDiffEditor {
   readonly scrollDOM: Node & ParentNode;
   readonly state: EditorState;
@@ -167,16 +290,20 @@ export function bindNativeRenderedDiffBlocks(
     const proposal = proposalEditor.state.doc.toString();
     const blocks = planNativeRenderedDiffBlocks(base, proposal);
     const changedLines = planNativeRenderedChangedLines(base, proposal);
+    const tableMarks = planNativeTableMarksByTable(base, proposal);
     const equalPairs = planNativeEqualLinePairs(base, proposal);
-    decorateRenderedBlocks(baseEditor, blocks, changedLines, equalPairs, "base");
-    decorateRenderedBlocks(proposalEditor, blocks, changedLines, equalPairs, "proposal");
+    decorateRenderedBlocks(baseEditor, blocks, changedLines, tableMarks.base, equalPairs, "base");
+    decorateRenderedBlocks(proposalEditor, blocks, changedLines, tableMarks.proposal, equalPairs, "proposal");
   };
   const schedule = (): void => {
     if (!active || frame !== null) return;
-    frame = requestAnimationFrame(() => {
+    // A timeout instead of requestAnimationFrame: a review pane often renders
+    // while its window is backgrounded, where animation frames are throttled and
+    // the pending refresh would never run, leaving that pane undecorated.
+    frame = setTimeout(() => {
       frame = null;
       refresh();
-    });
+    }, 0) as unknown as number;
   };
   const observer = new MutationObserver(schedule);
   observer.observe(baseEditor.scrollDOM, { childList: true, subtree: true });
@@ -187,7 +314,7 @@ export function bindNativeRenderedDiffBlocks(
     destroy: () => {
       if (!active) return;
       active = false;
-      if (frame !== null) cancelAnimationFrame(frame);
+      if (frame !== null) clearTimeout(frame);
       frame = null;
       observer.disconnect();
       clearRenderedBlocks(baseEditor);
@@ -200,9 +327,23 @@ function decorateRenderedBlocks(
   editor: NativeRenderedDiffEditor,
   blocks: readonly NativeDiffBlock[],
   changedLines: NativeRenderedChangedLines,
+  tableMarks: ReadonlyMap<number, NativeTableCellMarks>,
   equalPairs: readonly NativeEqualLinePair[],
   side: NativeDiffSide,
 ): void {
+  // A rendered table widget reports the line it starts on, which is not always
+  // the table's first row, so the table is resolved by containment instead of an
+  // exact start-line match.
+  const tables = parseNativeTables(editor.state.doc.toString());
+  const tableIndexForLine = (line: number): number => {
+    for (let index = 0; index < tables.length; index += 1) {
+      const table = tables[index];
+      if (table !== undefined && line >= table.startLine && line <= table.endLine) {
+        return index;
+      }
+    }
+    return -1;
+  };
   for (const candidate of Array.from(editor.scrollDOM.querySelectorAll(RENDERED_BLOCK_SELECTOR))) {
     if (!(candidate instanceof HTMLElement)) continue;
     clearRenderedBlock(candidate);
@@ -230,6 +371,7 @@ function decorateRenderedBlocks(
       (side === "base" ? changedLines.base : changedLines.proposal).map(
         (changed) => changed.text,
       ),
+      tableMarks.get(tableIndexForLine(lineNumber))?.cells ?? [],
     );
   }
 }
@@ -243,9 +385,15 @@ function markRenderedParts(
   candidate: HTMLElement,
   kind: "add" | "remove",
   changedTexts: readonly string[],
+  cellMarks: readonly (readonly boolean[])[],
 ): void {
+  const table = candidate.querySelector("table");
+  if (table !== null) {
+    markRenderedTableCells(table, kind, cellMarks);
+    return;
+  }
   const parts = candidate.querySelectorAll(
-    "table tr, .callout-content > p, .callout-content > ul > li, .callout-content > ol > li",
+    ".callout-content > p, .callout-content > ul > li, .callout-content > ol > li",
   );
   for (const part of Array.from(parts)) {
     if (!(part instanceof HTMLElement)) continue;
@@ -253,6 +401,30 @@ function markRenderedParts(
     part.classList.add(RENDERED_ROW_CLASS);
     part.setAttribute(RENDERED_DIFF_ATTRIBUTE, kind);
   }
+}
+
+/**
+ * Marks the individual cells that differ. Obsidian renders a header row before
+ * the body rows, so the marks are consumed in DOM order while the cell-level
+ * comparison skips the delimiter row that has no rendered counterpart.
+ */
+function markRenderedTableCells(
+  table: HTMLTableElement,
+  kind: "add" | "remove",
+  cellMarks: readonly (readonly boolean[])[],
+): void {
+  const renderedRows = Array.from(table.querySelectorAll("tr"));
+  renderedRows.forEach((row, rowIndex) => {
+    const marks = cellMarks[rowIndex];
+    if (marks === undefined) return;
+    const cells = Array.from(row.children);
+    cells.forEach((cell, columnIndex) => {
+      if (marks[columnIndex] !== true) return;
+      if (!(cell instanceof HTMLElement)) return;
+      cell.classList.add(RENDERED_ROW_CLASS);
+      cell.setAttribute(RENDERED_DIFF_ATTRIBUTE, kind);
+    });
+  });
 }
 
 function clearRenderedBlocks(editor: NativeRenderedDiffEditor): void {

@@ -55,7 +55,7 @@ test("proposal watcher observes atomic external saves and service reconciles rev
   }
 });
 
-test("target watcher marker is advisory while status remains pending", async () => {
+test("target watcher adopts the current human content while status remains pending", async () => {
   const vault = await createVault();
   try {
     await writeVaultFile(vault, "note.md", "base\n");
@@ -66,7 +66,9 @@ test("target watcher marker is advisory while status remains pending", async () 
     await writeVaultFile(vault, "note.md", "external\n");
     const marked = await service.markPotentialConflict(review.id);
     assert.equal(marked.status, "pending");
-    assert.equal(marked.conflict?.advisory, true);
+    assert.equal(marked.conflict, undefined);
+    assert.equal(marked.changes[0]?.baseContent, "external\n");
+    assert.equal(marked.changes[0]?.proposalContent, "external\n");
   } finally {
     await cleanupVault(vault);
   }

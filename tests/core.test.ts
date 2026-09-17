@@ -11,6 +11,7 @@ import {
   createReviewId,
   normalizeVaultRelativeTarget,
   rebaseChange,
+  rebaseChangeWithCurrentPriority,
   resolveSafeTarget,
   sha256,
   type ReviewChange,
@@ -180,6 +181,53 @@ test("conservative rebase refuses overlapping edits", () => {
   const result = rebaseChange(change, "one\nCURRENT\nthree\n");
   assert.equal(result.clean, false);
   assert.ok((result.overlappingRanges?.length ?? 0) > 0);
+});
+
+test("current-priority rebase keeps the human edit and drops the overlap", () => {
+  // Given: the document was edited by hand where the proposal also changed.
+  const base = "one\ntwo\nthree\n";
+  const change: ReviewChange = {
+    id: "0001",
+    operation: "modify",
+    target: "note.md",
+    baseHash: sha256(base),
+    baseContent: base,
+    proposalContent: "one\nPROPOSAL\nthree\n",
+    proposalHash: sha256("one\nPROPOSAL\nthree\n"),
+    hunkDecisions: {},
+  };
+
+  // When: the change is reconciled with the current content taking priority.
+  const reconciled = rebaseChangeWithCurrentPriority(change, "one\nCURRENT\nthree\n");
+
+  // Then: the human content becomes both the base and the proposal, so the
+  // overlapping agent edit is dropped instead of blocking the review.
+  assert.equal(reconciled.baseContent, "one\nCURRENT\nthree\n");
+  assert.equal(reconciled.proposalContent, "one\nCURRENT\nthree\n");
+  assert.equal(reconciled.baseHash, sha256("one\nCURRENT\nthree\n"));
+  assert.deepEqual(reconciled.hunkDecisions, {});
+});
+
+test("current-priority rebase still merges disjoint agent edits", () => {
+  // Given: the human edit and the proposal touch different lines.
+  const base = "one\ntwo\nthree\nfour\n";
+  const change: ReviewChange = {
+    id: "0001",
+    operation: "modify",
+    target: "note.md",
+    baseHash: sha256(base),
+    baseContent: base,
+    proposalContent: "ONE\ntwo\nthree\nfour\n",
+    proposalHash: sha256("ONE\ntwo\nthree\nfour\n"),
+    hunkDecisions: {},
+  };
+
+  // When: the change is reconciled with the current content taking priority.
+  const reconciled = rebaseChangeWithCurrentPriority(change, "one\ntwo\nthree\nFOUR\n");
+
+  // Then: the current content is the new base and the agent edit survives.
+  assert.equal(reconciled.baseContent, "one\ntwo\nthree\nFOUR\n");
+  assert.equal(reconciled.proposalContent, "ONE\ntwo\nthree\nFOUR\n");
 });
 
 test("vendored Myers adapter reconstructs both sides across deterministic fuzz cases", () => {
