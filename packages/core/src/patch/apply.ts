@@ -6,6 +6,7 @@ import { ReviewError, errorMessage } from "../model/errors";
 import { sha256 } from "../model/hash";
 import { assertTransition } from "../model/state-machine";
 import { inspectReviewConflicts } from "../conflict/check";
+import { reconcileReviewWithCurrentPriority } from "../conflict/rebase";
 import { resolveSafeTarget, isPathInside } from "../path/safe-path";
 import { ReviewStore } from "../storage/review-store";
 import { atomicWriteFile, exists, fsyncDirectory } from "../storage/atomic";
@@ -96,16 +97,28 @@ export async function approveReview(
 
       const initialInspection = await inspectReviewConflicts(store.vaultRoot, review);
       if (initialInspection.conflicts.length > 0 && options.force !== true) {
-        review = await persistAuthoritativeConflict(store, review, initialInspection.conflicts);
-        throw new ReviewError(
-          "REVIEW_CONFLICT",
-          "Target state changed since the review was created; direct apply was refused.",
-          {
-            reviewId,
-            revision: review.revision,
-            conflicts: initialInspection.conflicts,
-          },
-        );
+        // A human edit in the document outranks the proposal. Adopt the current
+        // content as the new baseline, merge the disjoint agent edits back on top,
+        // and only refuse if that still cannot be represented safely.
+        review = reconcileReviewWithCurrentPriority(review, initialInspection);
+        await store.save(review);
+        const reconciledInspection = await inspectReviewConflicts(store.vaultRoot, review);
+        if (reconciledInspection.conflicts.length > 0) {
+          review = await persistAuthoritativeConflict(
+            store,
+            review,
+            reconciledInspection.conflicts,
+          );
+          throw new ReviewError(
+            "REVIEW_CONFLICT",
+            "Target state changed since the review was created; direct apply was refused.",
+            {
+              reviewId,
+              revision: review.revision,
+              conflicts: reconciledInspection.conflicts,
+            },
+          );
+        }
       }
 
       const transactionId = `${review.id}-${Date.now()}-${randomBytes(5).toString("hex")}`;

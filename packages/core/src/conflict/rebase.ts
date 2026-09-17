@@ -1,8 +1,9 @@
-import type { ReviewChange } from "../model/review";
+import type { Review, ReviewChange } from "../model/review";
 import { ReviewError } from "../model/errors";
 import { sha256 } from "../model/hash";
 import { splitLinesPreserveEndings } from "../diff/text-lines";
 import { myersDiff } from "../vendor/jsdiff/myers";
+import type { ConflictInspection } from "./check";
 
 interface LineEdit {
   readonly start: number;
@@ -18,6 +19,90 @@ export interface RebaseResult {
     readonly current: { readonly start: number; readonly end: number };
     readonly proposal: { readonly start: number; readonly end: number };
   }[];
+}
+
+/**
+ * Reconciles an externally changed review while giving the current Vault
+ * content priority over overlapping proposal edits. A human edit in the
+ * document always wins: disjoint agent edits are merged on top of it, and an
+ * overlap keeps the current content as the new baseline instead of leaving the
+ * review stuck in a conflicted state.
+ */
+export function reconcileReviewWithCurrentPriority(
+  review: Review,
+  inspection: ConflictInspection,
+  now = new Date().toISOString(),
+): Review {
+  const conflictByChange = new Map<string, readonly string[]>();
+  for (const conflict of inspection.conflicts) {
+    const reasons = conflictByChange.get(conflict.changeId) ?? [];
+    conflictByChange.set(conflict.changeId, [...reasons, conflict.reason]);
+  }
+
+  const changes = review.changes.map((change) => {
+    const snapshot = inspection.snapshots.get(change.id);
+    const reasons = conflictByChange.get(change.id);
+    if (snapshot === undefined || reasons === undefined) return change;
+    if (reasons.some((reason) => reason !== "base-changed")) {
+      return preserveCurrentContent(change, snapshot.currentContent);
+    }
+    return rebaseChangeWithCurrentPriority(change, snapshot.currentContent);
+  });
+  const { conflict: _conflict, ...withoutConflict } = review;
+  return {
+    ...withoutConflict,
+    status: "pending",
+    revision: review.revision + 1,
+    updatedAt: now,
+    changes,
+  };
+}
+
+/**
+ * Rebases disjoint agent edits onto the current document and drops only the
+ * overlapping edits when a safe merge is impossible.
+ */
+export function rebaseChangeWithCurrentPriority(
+  change: ReviewChange,
+  currentContent: string | null,
+): ReviewChange {
+  if (currentContent === null) return preserveCurrentContent(change, null);
+  const result = rebaseChange(change, currentContent);
+  return result.clean && result.change !== undefined
+    ? result.change
+    : preserveCurrentContent(change, currentContent);
+}
+
+/**
+ * Adopts the current document as both base and proposal, which makes the human
+ * edit the authoritative content and clears any hunk decisions that no longer
+ * apply.
+ */
+function preserveCurrentContent(
+  change: ReviewChange,
+  currentContent: string | null,
+): ReviewChange {
+  const { newTarget: _newTarget, ...withoutNewTarget } = change;
+  if (currentContent === null) {
+    return {
+      ...withoutNewTarget,
+      operation: "delete",
+      baseHash: null,
+      baseContent: null,
+      proposalContent: null,
+      proposalHash: null,
+      hunkDecisions: {},
+    };
+  }
+  return {
+    ...withoutNewTarget,
+    operation: "modify",
+    baseHash: sha256(currentContent),
+    baseContent: currentContent,
+    proposalContent: currentContent,
+    proposalHash: sha256(currentContent),
+    hunkDecisions: {},
+  };
 }
 
 /**

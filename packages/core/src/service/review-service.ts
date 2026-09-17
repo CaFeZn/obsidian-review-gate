@@ -4,7 +4,6 @@ import type {
   HunkDecisionKind,
   Review,
   ReviewChange,
-  ReviewConflict,
   ReviewOperation,
   ReviewSource,
 } from "../model/review";
@@ -20,7 +19,10 @@ import {
   inspectReviewConflicts,
   type ConflictContext,
 } from "../conflict/check";
-import { rebaseChange } from "../conflict/rebase";
+import {
+  rebaseChange,
+  reconcileReviewWithCurrentPriority,
+} from "../conflict/rebase";
 import { resolveSafeTarget, resolveVaultRoot } from "../path/safe-path";
 import { ReviewStore, type ListReviewsOptions } from "../storage/review-store";
 import { lockDirectory, reviewLayout } from "../storage/layout";
@@ -290,13 +292,13 @@ export class ReviewService {
     input: UpdateProposalInput,
   ): Promise<Review> {
     return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
-      const review = await this.loadAndReconcile(reviewId);
-      assertMutable(review);
-      assertExpectedRevision(review, input.expectedRevision);
-      await this.assertConflictFree(review);
-      const change = review.changes.find((candidate) => candidate.id === input.changeId);
-      if (change === undefined) {
-        throw new ReviewError("CHANGE_NOT_FOUND", `Change not found: ${input.changeId}`, {
+        const review = await this.loadAndReconcile(reviewId);
+        assertMutable(review);
+        assertExpectedRevision(review, input.expectedRevision);
+        await this.assertConflictFree(review);
+        const change = review.changes.find((candidate) => candidate.id === input.changeId);
+        if (change === undefined) {
+          throw new ReviewError("CHANGE_NOT_FOUND", `Change not found: ${input.changeId}`, {
           reviewId,
           changeId: input.changeId,
         });
@@ -325,13 +327,13 @@ export class ReviewService {
     input: HunkDecisionInput,
   ): Promise<Review> {
     return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
-      const review = await this.loadAndReconcile(reviewId);
-      assertMutable(review);
-      assertExpectedRevision(review, input.expectedRevision);
-      await this.assertConflictFree(review);
-      const change = review.changes.find((candidate) => candidate.id === input.changeId);
-      if (change === undefined) {
-        throw new ReviewError("CHANGE_NOT_FOUND", `Change not found: ${input.changeId}`, {
+        const review = await this.loadAndReconcile(reviewId);
+        assertMutable(review);
+        assertExpectedRevision(review, input.expectedRevision);
+        await this.assertConflictFree(review);
+        const change = review.changes.find((candidate) => candidate.id === input.changeId);
+        if (change === undefined) {
+          throw new ReviewError("CHANGE_NOT_FOUND", `Change not found: ${input.changeId}`, {
           reviewId,
           changeId: input.changeId,
         });
@@ -376,29 +378,12 @@ export class ReviewService {
         await this.store.save(next);
         return next;
       }
-      const first = inspection.conflicts[0];
-      if (first === undefined) return review;
-      const conflict: ReviewConflict = {
-        detectedAt: new Date().toISOString(),
-        changeIds: inspection.conflicts.map((item) => item.changeId),
-        reason: first.reason,
-        advisory: true,
-      };
-      if (
-        review.conflict?.advisory === true &&
-        review.conflict.reason === conflict.reason &&
-        sameStrings(review.conflict.changeIds, conflict.changeIds)
-      ) {
-        return review;
-      }
-      const next: Review = {
-        ...review,
-        revision: review.revision + 1,
-        updatedAt: new Date().toISOString(),
-        conflict,
-      };
-      await this.store.save(next);
-      return next;
+      // Human edits win: adopt the current document as the new baseline and merge
+      // the disjoint agent edits back on top instead of parking the review on an
+      // advisory conflict.
+      const reconciled = reconcileReviewWithCurrentPriority(review, inspection);
+      await this.store.save(reconciled);
+      return reconciled;
     });
   }
 
@@ -721,10 +706,6 @@ function assertUniquePath(seen: Set<string>, target: string): void {
     );
   }
   seen.add(key);
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function sameTarget(left: string, right: string): boolean {
