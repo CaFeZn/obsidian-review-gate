@@ -10,6 +10,23 @@
   overflow-y: auto;
 }
 
+/* Obsidian's app chrome applies user-select: none to the whole body, so the
+   read-only review id and other review text could not be copied. Opt the text
+   surfaces back into selection, and keep only the decorative diff gutters
+   unselectable. */
+.obsreview-card-heading,
+.obsreview-card-target,
+.obsreview-detail-toolbar h2,
+.obsreview-metadata,
+.obsreview-diff-summary,
+.obsreview-hunk-header,
+.obsreview-line-content,
+.obsreview-conflict-warning,
+.obsreview-empty,
+.obsreview-status {
+  user-select: text;
+}
+
 /* Keep protocol/storage files out of the normal note-browsing experience. */
 .nav-folder-title[data-path=".obsreview"],
 .nav-folder-title[data-path^=".obsreview/"] {
@@ -438,6 +455,24 @@
   background: var(--obsreview-removed);
 }
 
+/* Obsidian paints fenced code blocks through .HyperMD-codeblock-bg and quotes
+   through .HyperMD-quote, both of which outrank the bare diff class. Re-assert
+   the side color with pane scoping so changed code and quote lines stay
+   visible. */
+.obsreview-native-base .cm-line.obsreview-cm-line-remove,
+.obsreview-native-base .cm-line.obsreview-cm-line-remove.HyperMD-codeblock,
+.obsreview-native-base .cm-line.obsreview-cm-line-remove.HyperMD-codeblock-bg,
+.obsreview-native-base .cm-line.obsreview-cm-line-remove.HyperMD-quote {
+  background: var(--obsreview-removed);
+}
+
+.obsreview-native-proposal .cm-line.obsreview-cm-line-add,
+.obsreview-native-proposal .cm-line.obsreview-cm-line-add.HyperMD-codeblock,
+.obsreview-native-proposal .cm-line.obsreview-cm-line-add.HyperMD-codeblock-bg,
+.obsreview-native-proposal .cm-line.obsreview-cm-line-add.HyperMD-quote {
+  background: var(--obsreview-added);
+}
+
 .obsreview-cm-inline-add,
 .obsreview-cm-inline-remove {
   text-decoration: underline;
@@ -542,6 +577,90 @@
   content: "";
   display: block;
   height: var(--obsreview-alignment-extra, 0px);
+}
+
+/* Rendered Markdown widgets (tables, Callouts) are a single block element, so
+   they cannot carry a line class. Compensate their height with margins instead,
+   staying colourless because an unchanged widget is not a change. */
+.obsreview-native-base .cm-embed-block[data-obsreview-align-key],
+.obsreview-native-proposal .cm-embed-block[data-obsreview-align-key] {
+  margin-top: var(--obsreview-alignment-before, 0px);
+  margin-bottom: var(--obsreview-alignment-extra, 0px);
+}
+
+.obsreview-native-base .cm-embed-block.obsreview-native-rendered-remove,
+.obsreview-native-proposal .cm-embed-block.obsreview-native-rendered-add {
+  box-sizing: border-box;
+  border-radius: 3px;
+}
+
+.obsreview-native-base .cm-embed-block.obsreview-native-rendered-remove {
+  box-shadow: inset 2px 0 0
+    color-mix(in srgb, var(--color-red) 78%, transparent);
+}
+
+.obsreview-native-proposal .cm-embed-block.obsreview-native-rendered-add {
+  box-shadow: inset 2px 0 0
+    color-mix(in srgb, var(--color-green) 78%, transparent);
+}
+
+/* A table carries the diff on its changed rows only, so the widget itself stays
+   transparent instead of tinting every cell. */
+.obsreview-native-base .cm-table-widget.obsreview-native-rendered-remove,
+.obsreview-native-proposal .cm-table-widget.obsreview-native-rendered-add {
+  background: transparent;
+}
+
+.obsreview-native-base .cm-callout.obsreview-native-rendered-remove,
+.obsreview-native-proposal .cm-callout.obsreview-native-rendered-add {
+  --obsreview-rendered-accent: var(--color-red);
+  box-shadow: inset 3px 0 0
+    color-mix(in srgb, var(--obsreview-rendered-accent) 80%, transparent);
+}
+
+.obsreview-native-proposal .cm-callout.obsreview-native-rendered-add {
+  --obsreview-rendered-accent: var(--color-green);
+}
+
+.obsreview-native-base .cm-callout.obsreview-native-rendered-remove .callout-title,
+.obsreview-native-base .cm-callout.obsreview-native-rendered-remove .callout-content {
+  background: color-mix(
+    in srgb,
+    var(--color-red) 7%,
+    var(--background-primary)
+  );
+}
+
+.obsreview-native-proposal .cm-callout.obsreview-native-rendered-add .callout-title,
+.obsreview-native-proposal .cm-callout.obsreview-native-rendered-add .callout-content {
+  background: color-mix(
+    in srgb,
+    var(--color-green) 7%,
+    var(--background-primary)
+  );
+}
+
+.obsreview-native-base .cm-embed-block.obsreview-native-rendered-remove > *,
+.obsreview-native-proposal .cm-embed-block.obsreview-native-rendered-add > * {
+  color: var(--text-normal);
+}
+
+/* Only the rows or Callout paragraphs that carry a changed source line get the
+   strong side color. */
+.obsreview-native-base .cm-embed-block tr.obsreview-native-rendered-row > td,
+.obsreview-native-base .cm-embed-block tr.obsreview-native-rendered-row > th,
+.obsreview-native-base .cm-embed-block .callout-content > .obsreview-native-rendered-row {
+  background: color-mix(in srgb, var(--color-red) 22%, transparent);
+  box-shadow: inset 3px 0 0
+    color-mix(in srgb, var(--color-red) 85%, transparent);
+}
+
+.obsreview-native-proposal .cm-embed-block tr.obsreview-native-rendered-row > td,
+.obsreview-native-proposal .cm-embed-block tr.obsreview-native-rendered-row > th,
+.obsreview-native-proposal .cm-embed-block .callout-content > .obsreview-native-rendered-row {
+  background: color-mix(in srgb, var(--color-green) 22%, transparent);
+  box-shadow: inset 3px 0 0
+    color-mix(in srgb, var(--color-green) 85%, transparent);
 }
 
 @container obsreview-native-proposal (max-width: 520px) {

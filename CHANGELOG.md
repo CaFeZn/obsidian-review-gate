@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.8 — 2026-09-17
+
+- Marked the exact changed rows and paragraphs inside rendered Markdown blocks instead of tinting a whole table or Callout, so a single edited table row no longer paints every sibling row.
+- Recognized Obsidian-style aligned tables such as `| --: | ---- |` when expanding a changed row to its rendered widget, which previously left those tables entirely unmarked.
+- Kept red and green fills visible on changed fenced code-block and blockquote lines, which Obsidian's own code-block and quote backgrounds previously covered.
+- Stopped the two native review panes from pushing each other while scrolling a full-page diff, which previously jumped the view back to the top or snapped it to the bottom.
+- Saved the proposal with `Ctrl+S` on the editable proposal pane; the shortcut previously did nothing because Obsidian's `editor:save-file` calls `view.save()`.
+- Made the read-only review id and other review text copyable, since Obsidian's app chrome disables text selection on the whole window.
+
 ## 0.1.7 — 2026-08-27
 
 - Aligned unchanged native Markdown rows, including headings after hidden Properties, by adding stable equal-line anchors and measured before-row spacing.

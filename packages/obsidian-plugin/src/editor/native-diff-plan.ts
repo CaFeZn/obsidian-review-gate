@@ -1,5 +1,6 @@
 import { JsDiffEngine } from "../../../core/src/diff/jsdiff-engine";
 import type { DiffHunk, DiffLine } from "../../../core/src/diff/types";
+import { splitLinesPreserveEndings } from "../../../core/src/diff/text-lines";
 
 export type NativeDiffSide = "base" | "proposal";
 
@@ -11,6 +12,12 @@ export interface NativeDiffBlock {
   readonly proposalLines: readonly number[];
   readonly baseSpacerLines: number;
   readonly proposalSpacerLines: number;
+}
+
+export interface NativeEqualLinePair {
+  readonly baseLine: number;
+  readonly proposalLine: number;
+  readonly alignmentKey: string;
 }
 
 const diffEngine = new JsDiffEngine();
@@ -36,6 +43,44 @@ export function planNativeDiffBlocks(
       proposalSpacerLines: Math.max(0, baseLines.length - proposalLines.length),
     };
   });
+}
+
+/**
+ * Pairs every unchanged line across both sides. The rendered-diff decorator uses
+ * these keys to line up table rows, Callouts, and other Markdown widgets that
+ * Obsidian renders as a single block.
+ */
+export function planNativeEqualLinePairs(
+  base: string,
+  proposal: string,
+): readonly NativeEqualLinePair[] {
+  const hunks = diffEngine.diff(base, proposal, { contextLines: 0 }).hunks;
+  const pairs: NativeEqualLinePair[] = [];
+  let baseLine = 1;
+  let proposalLine = 1;
+  const appendUntil = (baseEnd: number, proposalEnd: number): void => {
+    const count = Math.min(baseEnd - baseLine, proposalEnd - proposalLine);
+    for (let index = 0; index < count; index += 1) {
+      const pairedBaseLine = baseLine + index;
+      const pairedProposalLine = proposalLine + index;
+      pairs.push({
+        baseLine: pairedBaseLine,
+        proposalLine: pairedProposalLine,
+        alignmentKey: `equal:${pairedBaseLine}:${pairedProposalLine}`,
+      });
+    }
+  };
+
+  for (const hunk of hunks) {
+    appendUntil(hunk.oldStart, hunk.newStart);
+    baseLine = hunk.oldStart + hunk.oldLines;
+    proposalLine = hunk.newStart + hunk.newLines;
+  }
+  appendUntil(
+    splitLinesPreserveEndings(base).length + 1,
+    splitLinesPreserveEndings(proposal).length + 1,
+  );
+  return pairs;
 }
 
 export function nativeChangedLines(

@@ -8,6 +8,7 @@ import {
   bindNativeScrollContainers,
   isNativeScrollContainer,
 } from "./native-scroll-sync";
+import { bindNativeRenderedDiffBlocks } from "./native-rendered-diff-blocks";
 import {
   bindNativeVisualAlignment,
   isNativeVisualAlignmentSurface,
@@ -45,6 +46,11 @@ export async function createNativeDiffPair(
 
   let blocks = planNativeDiffBlocks(content.base, content.proposal);
   const diffBinding = bindNativeDiffEditors(baseEditor, proposalEditor, content.base);
+  const renderedDiffBinding = bindNativeRenderedDiffBlocks(
+    baseEditor,
+    proposalEditor,
+    content.base,
+  );
   const visualAlignmentBinding = bindNativeVisualAlignment(
     baseEditor.scrollDOM,
     proposalEditor.scrollDOM,
@@ -66,6 +72,7 @@ export async function createNativeDiffPair(
     destroy: () => {
       scrollBinding.destroy();
       visualAlignmentBinding.destroy();
+      renderedDiffBinding.destroy();
       diffBinding.destroy();
     },
   };

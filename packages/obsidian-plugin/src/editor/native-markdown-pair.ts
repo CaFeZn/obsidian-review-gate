@@ -15,13 +15,15 @@ import { createMainWindowReviewLeaves } from "./native-leaf-allocation";
 import { isNativeViewMounted } from "./native-view-lifecycle";
 
 class ReviewMarkdownView extends MarkdownView {
-  public override requestSave = (): void => this.onSaveRequested?.();
+  public override requestSave = (): void => {
+    void this.onSaveRequested?.();
+  };
 
   public constructor(
     leaf: WorkspaceLeaf,
     private readonly title: string,
     private readonly onClosed: () => void,
-    private readonly onSaveRequested: (() => void) | null,
+    private readonly onSaveRequested: (() => Promise<void>) | null,
   ) {
     super(leaf);
     this.allowNoFile = true;
@@ -32,7 +34,9 @@ class ReviewMarkdownView extends MarkdownView {
   }
 
   public override save(): Promise<void> {
-    return Promise.resolve();
+    // Obsidian's editor:save-file command (Ctrl+S) calls view.save(), so a
+    // no-op here made Ctrl+S silently do nothing on the editable proposal.
+    return this.onSaveRequested?.() ?? Promise.resolve();
   }
 
   public override async onClose(): Promise<void> {
@@ -48,7 +52,7 @@ export async function createNativeMarkdownPair(
   const reviewLeaves = createMainWindowReviewLeaves(app.workspace);
   const { baseLeaf, proposalLeaf } = reviewLeaves;
   let closePair = (): void => undefined;
-  let saveFromCommand = (): void => undefined;
+  let saveFromCommand = async (): Promise<void> => undefined;
   const baseView = new ReviewMarkdownView(
     baseLeaf,
     `${t("currentBase")} · ${request.target}`,
@@ -112,9 +116,7 @@ export async function createNativeMarkdownPair(
     diffController?.focusHunk(hunkIndex);
   };
 
-  saveFromCommand = () => {
-    void runCommand(() => request.onSave(proposalView.getViewData()));
-  };
+  saveFromCommand = () => runCommand(() => request.onSave(proposalView.getViewData()));
 
   try {
     await baseLeaf.open(baseView);

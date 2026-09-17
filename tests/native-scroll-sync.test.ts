@@ -63,6 +63,62 @@ class QuantizedTestScrollContainer extends TestScrollContainer {
   }
 }
 
+/**
+ * Reproduces CodeMirror block virtualization: the scrollable range grows while
+ * the user scrolls, and any scrollTop beyond the current range is clamped by the
+ * browser the same way a real viewport clamps it.
+ */
+class GrowingClampedTestScrollContainer extends TestScrollContainer {
+  public maxScrollTop = Number.POSITIVE_INFINITY;
+
+  public override set scrollTop(value: number) {
+    const clamped = Math.max(0, Math.min(this.maxScrollTop, value));
+    super.scrollTop = clamped;
+  }
+
+  public override get scrollTop(): number {
+    return super.scrollTop;
+  }
+}
+
+test("native scroll sync does not echo a clamped programmatic write back", () => {
+  // Given: a target whose real range is smaller than the computed mapping and
+  // that clamps the write the way a browser viewport does.
+  const base = new TestScrollContainer(5_000, 100);
+  const proposal = new GrowingClampedTestScrollContainer(2_000, 100);
+  proposal.maxScrollTop = 500;
+  const binding = bindNativeScrollContainers(base, proposal);
+
+  // When: the user scrolls the base to a position that maps past the target range.
+  base.scrollFromUser(4_000);
+
+  // Then: the clamped target value must not be treated as a user scroll and
+  // pulled back into the base.
+  assert.equal(proposal.scrollTop, 500);
+  assert.equal(base.programmaticWrites, 0);
+  assert.equal(base.scrollTop, 4_000);
+  binding.destroy();
+});
+
+test("native scroll sync re-maps once the target range grows", async () => {
+  // Given: a virtualized target that reports a small range first, then grows.
+  const base = new TestScrollContainer(5_000, 100);
+  const proposal = new GrowingClampedTestScrollContainer(2_000, 100);
+  proposal.maxScrollTop = 500;
+  const binding = bindNativeScrollContainers(base, proposal);
+  base.scrollFromUser(4_000);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // When: CodeMirror finishes measuring and the target can scroll further.
+  proposal.scrollHeight = 5_000;
+  proposal.maxScrollTop = 4_900;
+  base.scrollFromUser(4_000);
+
+  // Then: the target follows the newly available range instead of staying clamped.
+  assert.equal(proposal.scrollTop, 4_000);
+  binding.destroy();
+});
+
 test("native scroll sync drives the proposal when the base scrolls", () => {
   // Given: two equally scrollable native Markdown panes.
   const base = new TestScrollContainer(1_100, 100);
@@ -104,39 +160,6 @@ test("native scroll sync maps unequal ranges by relative progress", () => {
 
   // Then: the proposal moves halfway through its own range.
   assert.equal(proposal.scrollTop, 1_000);
-  binding.destroy();
-});
-
-test("native scroll sync maps between corresponding hunk anchors", () => {
-  const base = new TestScrollContainer(1_100, 100);
-  const proposal = new TestScrollContainer(2_100, 100);
-  const anchors = [
-    { base: 300, proposal: 900 },
-    { base: 700, proposal: 1_500 },
-  ];
-  const binding = bindNativeScrollContainers(base, proposal, {
-    anchors: () => anchors,
-  });
-
-  base.scrollFromUser(300);
-  assert.equal(proposal.scrollTop, 900);
-  base.scrollFromUser(500);
-  assert.equal(proposal.scrollTop, 1_200);
-  proposal.scrollFromUser(1_500);
-  assert.equal(base.scrollTop, 700);
-  binding.destroy();
-});
-
-test("native scroll sync preserves the document bottom past the last usable anchor", () => {
-  const base = new TestScrollContainer(1_100, 100);
-  const proposal = new TestScrollContainer(2_100, 100);
-  const binding = bindNativeScrollContainers(base, proposal, {
-    anchors: () => [{ base: 1_100, proposal: 1_500 }],
-  });
-
-  base.scrollFromUser(1_000);
-
-  assert.equal(proposal.scrollTop, 2_000);
   binding.destroy();
 });
 

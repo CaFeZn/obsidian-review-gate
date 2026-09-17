@@ -375,7 +375,7 @@ function alignmentStyleRules(
     }
     if (declarations.length === 0) continue;
     rules.push(
-      `${scope} .cm-line[${ALIGNMENT_KEY_ATTRIBUTE}="${escapeCssAttribute(key)}"] { ${declarations.join("; ")} }`,
+      `${scope} :is(.cm-line, .cm-embed-block)[${ALIGNMENT_KEY_ATTRIBUTE}="${escapeCssAttribute(key)}"] { ${declarations.join("; ")} }`,
     );
   }
   return rules.join("\n");
