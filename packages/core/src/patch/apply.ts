@@ -7,6 +7,8 @@ import { sha256 } from "../model/hash";
 import { assertTransition } from "../model/state-machine";
 import { inspectReviewConflicts } from "../conflict/check";
 import { reconcileReviewWithCurrentPriority } from "../conflict/rebase";
+import { JsDiffEngine } from "../diff/jsdiff-engine";
+import { planPartialCommit } from "./partial";
 import { resolveSafeTarget, isPathInside } from "../path/safe-path";
 import { ReviewStore } from "../storage/review-store";
 import { atomicWriteFile, exists, fsyncDirectory } from "../storage/atomic";
@@ -23,6 +25,11 @@ export interface ApproveOptions {
   readonly actor?: string;
   readonly expectedRevision?: number;
   readonly lockTimeoutMs?: number;
+  /**
+   * Write only the hunks the reader has explicitly accepted, leaving the rest of
+   * the review pending so a long change can be submitted in batches.
+   */
+  readonly onlyAccepted?: boolean;
 }
 
 export interface ApplyResult {
@@ -95,6 +102,24 @@ export async function approveReview(
         );
       }
 
+      // Batching: write only the accepted hunks and keep the rest pending, so a
+      // long review can be submitted in several sittings.
+      let remnant: readonly ReviewChange[] | null = null;
+      if (options.onlyAccepted === true) {
+        const engine = new JsDiffEngine();
+        const plan = planPartialCommit(review.changes, engine);
+        if (plan.commit.length === 0) {
+          throw new ReviewError(
+            "INVALID_ARGUMENTS",
+            "No accepted change block is ready to submit.",
+            { reviewId },
+          );
+        }
+        // The remnant only exists when the review itself continues.
+        remnant = plan.remnant.length > 0 ? plan.remnant : null;
+        review = { ...review, changes: plan.commit };
+      }
+
       const initialInspection = await inspectReviewConflicts(store.vaultRoot, review);
       if (initialInspection.conflicts.length > 0 && options.force !== true) {
         // A human edit in the document outranks the proposal. Adopt the current
@@ -160,11 +185,39 @@ export async function approveReview(
         }
 
         await verifyAppliedReview(review, journal.entries);
+        if (remnant !== null) {
+          // A batch was written; the remaining blocks stay pending so the review
+          // survives for the next sitting.
+          const { conflict: _conflict, ...rest } = review;
+          const continued: Review = {
+            ...rest,
+            status: "pending",
+            revision: review.revision + 1,
+            updatedAt: new Date().toISOString(),
+            changes: remnant,
+          };
+          await store.save(continued);
+          journal = { ...journal, phase: "committed" };
+          await writeJournal(txDirectory, journal);
+          await preserveTransactionBackups(
+            store.storageBase,
+            review.id,
+            journal.entries,
+            transactionId,
+          );
+          await rm(txDirectory, { recursive: true, force: true });
+          return { review: continued, transactionId };
+        }
         const approved = approvedReview(review, options);
         await store.archive(approved);
         journal = { ...journal, phase: "committed" };
         await writeJournal(txDirectory, journal);
-        await preserveTransactionBackups(store.storageBase, review.id, journal.entries);
+        await preserveTransactionBackups(
+          store.storageBase,
+          review.id,
+          journal.entries,
+          transactionId,
+        );
         await rm(txDirectory, { recursive: true, force: true });
         return { review: approved, transactionId };
       } catch (error) {
@@ -179,6 +232,7 @@ export async function approveReview(
                 store.storageBase,
                 review.id,
                 journal.entries,
+                transactionId,
               );
               await rm(txDirectory, { recursive: true, force: true });
               return { review: located.review, transactionId };
@@ -543,6 +597,7 @@ export async function preserveTransactionBackups(
   storageBase: string,
   reviewId: string,
   entries: readonly TransactionEntry[],
+  transactionId?: string,
 ): Promise<void> {
   for (const entry of entries) {
     const backupCandidates = [
@@ -553,12 +608,20 @@ export async function preserveTransactionBackups(
     ];
     for (const candidate of backupCandidates) {
       if (!(await exists(candidate.source))) continue;
-      const destination = path.join(
+      const primaryDestination = path.join(
         path.dirname(trashTargetPath(storageBase, reviewId, entry.target)),
         ".backups",
         entry.changeId,
         candidate.name,
       );
+      const scopedDestination =
+        transactionId === undefined
+          ? null
+          : `${primaryDestination}.${transactionId}`;
+      const destination =
+        scopedDestination !== null && (await exists(primaryDestination))
+          ? scopedDestination
+          : primaryDestination;
       await mkdir(path.dirname(destination), { recursive: true });
       if (await exists(destination)) await rm(destination, { force: true });
       await rename(candidate.source, destination);

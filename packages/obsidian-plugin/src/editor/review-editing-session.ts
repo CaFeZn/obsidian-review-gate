@@ -60,6 +60,14 @@ export class ReviewEditingSession {
     return this.drafts.size > 0;
   }
 
+  public hasAcceptedHunks(): boolean {
+    return this.review.changes.some((change) =>
+      Object.values(change.hunkDecisions).some(
+        (decision) => decision.decision === "accepted",
+      ),
+    );
+  }
+
   public diff(changeId: string): DiffResult {
     const change = proposalChange(this.review, changeId);
     return this.service.diffEngine.diff(change.baseContent ?? "", this.proposal(changeId));
@@ -130,6 +138,17 @@ export class ReviewEditingSession {
   public async approve(): Promise<ApplyResult> {
     await this.saveAll();
     const result = await this.service.approve(this.review.id, {
+      expectedRevision: this.review.revision,
+      actor: "obsidian-user",
+    });
+    this.review = result.review;
+    return result;
+  }
+
+  public async submitAccepted(): Promise<ApplyResult> {
+    await this.saveAll();
+    const result = await this.service.approve(this.review.id, {
+      onlyAccepted: true,
       expectedRevision: this.review.revision,
       actor: "obsidian-user",
     });

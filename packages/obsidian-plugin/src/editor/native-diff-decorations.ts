@@ -9,6 +9,7 @@ import {
   isNativeScrollContainer,
 } from "./native-scroll-sync";
 import { bindNativeRenderedDiffBlocks } from "./native-rendered-diff-blocks";
+import { activateNativeHunk, focusNativeHunk } from "./native-hunk-focus";
 import {
   bindNativeVisualAlignment,
   isNativeVisualAlignmentSurface,
@@ -45,6 +46,7 @@ export async function createNativeDiffPair(
   }
 
   let blocks = planNativeDiffBlocks(content.base, content.proposal);
+  let active = true;
   const diffBinding = bindNativeDiffEditors(baseEditor, proposalEditor, content.base);
   const renderedDiffBinding = bindNativeRenderedDiffBlocks(
     baseEditor,
@@ -64,12 +66,18 @@ export async function createNativeDiffPair(
     focusHunk: (index) => {
       scrollBinding.suspendUntilScrollIdle();
       blocks = planNativeDiffBlocks(content.base, proposalView.getViewData());
+      const focused = focusNativeHunk(baseEditor, proposalEditor, blocks, index);
+      if (focused === null) return;
       const block = blocks[normalizeIndex(index, blocks.length)];
       if (block === undefined) return;
       scrollToLine(baseView.editor, block.baseStart);
       scrollToLine(proposalView.editor, block.proposalStart);
+      setTimeout(() => {
+        if (active) activateNativeHunk(baseEditor, proposalEditor, focused.label);
+      }, 0);
     },
     destroy: () => {
+      active = false;
       scrollBinding.destroy();
       visualAlignmentBinding.destroy();
       renderedDiffBinding.destroy();
@@ -88,6 +96,7 @@ export function isNativeCodeMirrorEditor(
     state !== null &&
     typeof state === "object" &&
     typeof Reflect.get(candidate, "dispatch") === "function" &&
+    typeof Reflect.get(candidate, "focus") === "function" &&
     isNativeScrollContainer(scrollDOM)
   );
 }

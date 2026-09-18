@@ -313,12 +313,13 @@ async function cancelCommand(service: ReviewService, args: ParsedArguments): Pro
 }
 
 async function approveCommand(service: ReviewService, args: ParsedArguments): Promise<CommandResult> {
-  rejectUnknownFlags(args, ["vault", "expected-revision", "actor", "force"]);
+  rejectUnknownFlags(args, ["vault", "expected-revision", "actor", "force", "only-accepted"]);
   const reviewId = positional(args, 0, "review id");
   const expectedRevision = integerFlag(args, "expected-revision");
   const actor = flag(args, "actor");
   const result = await service.approve(reviewId, {
     force: booleanFlag(args, "force"),
+    onlyAccepted: booleanFlag(args, "only-accepted"),
     ...(expectedRevision === undefined ? {} : { expectedRevision }),
     ...(actor === undefined ? {} : { actor }),
   });

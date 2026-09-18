@@ -543,6 +543,17 @@
   border-bottom: 1px solid var(--color-green);
 }
 
+.obsreview-native-base .cm-line.obsreview-native-hunk-active,
+.obsreview-native-proposal .cm-line.obsreview-native-hunk-active,
+.obsreview-native-base .cm-embed-block.obsreview-native-hunk-active,
+.obsreview-native-proposal .cm-embed-block.obsreview-native-hunk-active,
+.obsreview-native-base .obsreview-native-alignment-spacer.obsreview-native-hunk-active,
+.obsreview-native-proposal .obsreview-native-alignment-spacer.obsreview-native-hunk-active {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
 .obsreview-native-hunk-anchor {
   min-height: 2em;
 }

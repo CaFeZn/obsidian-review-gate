@@ -18,6 +18,7 @@ export interface NativeCodeMirrorEditor {
   readonly scrollDOM: NativeScrollContainer;
   readonly state: EditorState;
   dispatch(spec: TransactionSpec): void;
+  focus(): void;
 }
 
 export interface NativeDiffEditorBinding {
@@ -29,11 +30,13 @@ interface NativeDiffSession {
   readonly base: string;
   readonly baseEditor: NativeCodeMirrorEditor;
   readonly proposalEditor: NativeCodeMirrorEditor;
+  activeHunkLabel: string | null;
 }
 
 const sessions = new WeakMap<NativeCodeMirrorEditor, NativeDiffSession>();
 const stateSessions = new WeakMap<EditorState, NativeDiffSession>();
 const refreshNativeDiff = StateEffect.define<null>();
+export const setNativeActiveHunk = StateEffect.define<string | null>();
 const protectNativeBase = EditorState.transactionFilter.of((transaction) => {
   const session = stateSessions.get(transaction.startState);
   return session?.side === "base" && transaction.docChanged ? [] : transaction;
@@ -45,11 +48,21 @@ const nativeDiffDecorationField = StateField.define<DecorationSet>({
     const refreshRequested = transaction.effects.some((effect) =>
       effect.is(refreshNativeDiff),
     );
+    const activeHunkEffect = transaction.effects.find((effect) =>
+      effect.is(setNativeActiveHunk),
+    );
     if (session === undefined) {
-      return refreshRequested ? Decoration.none : decorations.map(transaction.changes);
+      return refreshRequested || activeHunkEffect !== undefined
+        ? Decoration.none
+        : decorations.map(transaction.changes);
     }
     stateSessions.set(transaction.state, session);
-    if (!transaction.docChanged && !refreshRequested) return decorations;
+    if (activeHunkEffect !== undefined) {
+      session.activeHunkLabel = activeHunkEffect.value;
+    }
+    if (!transaction.docChanged && !refreshRequested && activeHunkEffect === undefined) {
+      return decorations;
+    }
     return decorationsForState(transaction.state, session);
   },
   provide: (field) => EditorView.decorations.from(field),
@@ -72,8 +85,16 @@ export function bindNativeDiffEditors(
   base: string,
 ): NativeDiffEditorBinding {
   const shared = { base, baseEditor, proposalEditor };
-  const baseSession: NativeDiffSession = { ...shared, side: "base" };
-  const proposalSession: NativeDiffSession = { ...shared, side: "proposal" };
+  const baseSession: NativeDiffSession = {
+    ...shared,
+    side: "base",
+    activeHunkLabel: null,
+  };
+  const proposalSession: NativeDiffSession = {
+    ...shared,
+    side: "proposal",
+    activeHunkLabel: null,
+  };
   sessions.set(baseEditor, baseSession);
   sessions.set(proposalEditor, proposalSession);
   stateSessions.set(baseEditor.state, baseSession);
@@ -106,6 +127,7 @@ function decorationsForState(
         ? state.doc.toString()
         : session.proposalEditor.state.doc.toString(),
     side: session.side,
+    activeHunkLabel: session.activeHunkLabel,
   });
 }
 

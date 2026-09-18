@@ -8,6 +8,7 @@ export * from "./diff/jsdiff-engine";
 export * from "./diff/inline";
 export * from "./patch/hunk-operations";
 export * from "./patch/apply";
+export * from "./patch/partial";
 export * from "./conflict/check";
 export * from "./conflict/rebase";
 export * from "./storage/review-store";

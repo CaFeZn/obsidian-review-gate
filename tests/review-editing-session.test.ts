@@ -66,6 +66,17 @@ test("approval saves every dirty file and uses the latest revision", async () =>
   assert.deepEqual(harness.calls(), ["save:0001:2", "save:0002:3", "approve:4"]);
 });
 
+test("partial approval saves drafts and passes onlyAccepted", async () => {
+  const review = reviewWith([changeWith("0001", "base\n", "proposal\n")], 5);
+  const harness = createHarness(review);
+  const session = new ReviewEditingSession(harness.service, review);
+  session.updateDraft("0001", "draft\n");
+
+  await session.submitAccepted();
+
+  assert.deepEqual(harness.calls(), ["save:0001:5", "approve-partial:6"]);
+});
+
 interface Harness {
   readonly service: ReviewSessionService;
   review(): Review;
@@ -95,7 +106,11 @@ function createHarness(initialReview: Review, conflictOnSave = false): Harness {
       return currentReview;
     },
     approve: async (_reviewId, options): Promise<ApplyResult> => {
-      calls.push(`approve:${options?.expectedRevision ?? -1}`);
+      calls.push(
+        options?.onlyAccepted === true
+          ? `approve-partial:${options.expectedRevision ?? -1}`
+          : `approve:${options?.expectedRevision ?? -1}`,
+      );
       return { review: currentReview, transactionId: "transaction" };
     },
   };

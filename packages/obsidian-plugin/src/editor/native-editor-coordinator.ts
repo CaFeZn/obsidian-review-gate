@@ -13,6 +13,7 @@ import {
 
 export interface NativeEditorPair {
   isOpen(): boolean;
+  isDirty?(): boolean;
   reveal(): Promise<void>;
   focusHunk(index: number): void;
   close(): void;
@@ -34,6 +35,7 @@ export interface NativeEditorPairRequest {
   readonly editable: boolean;
   readonly onClose: () => void;
   readonly onSave: (proposalContent: string) => Promise<void>;
+  readonly hasAcceptedHunks: () => boolean;
   readonly onModeChange?: (
     mode: DiffMode,
     proposalContent?: string,
@@ -44,6 +46,7 @@ export interface NativeEditorPairRequest {
     decision: HunkDecisionKind,
   ) => Promise<NativeEditorPairUpdate | null>;
   readonly onApprove: (proposalContent: string) => Promise<boolean>;
+  readonly onSubmitAccepted: (proposalContent: string) => Promise<boolean>;
 }
 
 interface NativeReviewOperations {
@@ -57,6 +60,7 @@ interface NativeReviewOperations {
     },
   ): Promise<HunkDecisionResult | null>;
   approve(session: ReviewEditingSession): Promise<ApplyResult | null>;
+  submitAccepted(session: ReviewEditingSession): Promise<ApplyResult | null>;
 }
 
 interface NativeEditorCoordinatorOptions {
@@ -67,13 +71,18 @@ interface NativeEditorCoordinatorOptions {
 
 interface ActiveEditorSession {
   readonly reviewId: string;
+  readonly changeId: string;
+  readonly mode: DiffMode;
   readonly key: string;
   readonly pair: NativeEditorPair;
+  readonly session: ReviewEditingSession;
+  revision: number;
 }
 
 export class NativeEditorCoordinator {
   private generation = 0;
   private active: ActiveEditorSession | null = null;
+  private mutationDepth = 0;
 
   public constructor(private readonly options: NativeEditorCoordinatorOptions) {}
 
@@ -112,35 +121,54 @@ export class NativeEditorCoordinator {
         this.disposeActive();
       },
       onSave: async (proposalContent) => {
-        session.updateDraft(change.id, proposalContent);
-        if (!session.isDirty(change.id)) return;
-        await this.options.operations.save(session, change.id);
+        await this.runMutation(async () => {
+          session.updateDraft(change.id, proposalContent);
+          if (!session.isDirty(change.id)) return;
+          await this.options.operations.save(session, change.id);
+        });
       },
+      hasAcceptedHunks: () => session.hasAcceptedHunks(),
       onModeChange: async (nextMode, proposalContent) => {
         if (proposalContent !== undefined) {
           session.updateDraft(change.id, proposalContent);
           if (session.isDirty(change.id)) {
-            await this.options.operations.save(session, change.id);
+            await this.runMutation(() => this.options.operations.save(session, change.id));
+            if (session.isDirty(change.id)) return;
           }
         }
-        await this.open(review, change, nextMode);
+        const currentReview = session.snapshot();
+        const currentChange = currentReview.changes.find(
+          (candidate) => candidate.id === change.id,
+        );
+        if (currentChange === undefined) return;
+        await this.open(currentReview, currentChange, nextMode);
       },
       onDecideHunk: async (proposalContent, hunkIndex, decision) => {
-        session.updateDraft(change.id, proposalContent);
-        const result = await this.options.operations.decide(session, {
-          changeId: change.id,
-          hunkIndex,
-          decision,
+        return this.runMutation(async () => {
+          session.updateDraft(change.id, proposalContent);
+          const result = await this.options.operations.decide(session, {
+            changeId: change.id,
+            hunkIndex,
+            decision,
+          });
+          if (result === null) return null;
+          return {
+            proposalContent: session.proposal(change.id),
+            hunkIndex: result.hunkIndex,
+          };
         });
-        if (result === null) return null;
-        return {
-          proposalContent: session.proposal(change.id),
-          hunkIndex: result.hunkIndex,
-        };
       },
       onApprove: async (proposalContent) => {
-        session.updateDraft(change.id, proposalContent);
-        return (await this.options.operations.approve(session)) !== null;
+        return this.runMutation(async () => {
+          session.updateDraft(change.id, proposalContent);
+          return (await this.options.operations.approve(session)) !== null;
+        });
+      },
+      onSubmitAccepted: async (proposalContent) => {
+        return this.runMutation(async () => {
+          session.updateDraft(change.id, proposalContent);
+          return (await this.options.operations.submitAccepted(session)) !== null;
+        });
       },
     };
     const pair = await this.options.createPair(request);
@@ -148,9 +176,45 @@ export class NativeEditorCoordinator {
       pair.close();
       return;
     }
-    this.active = { reviewId: review.id, key, pair };
+    this.active = {
+      reviewId: review.id,
+      changeId: change.id,
+      mode,
+      key,
+      pair,
+      session,
+      revision: review.revision,
+    };
     await pair.reveal();
     pair.focusHunk(0);
+  }
+
+  public async refresh(review: Review): Promise<boolean> {
+    const active = this.active;
+    if (active === null || active.reviewId !== review.id) return false;
+    if (this.mutationDepth > 0) return false;
+    if (review.revision <= active.revision) return true;
+    if (active.pair.isDirty?.() === true || active.session.hasDirtyDrafts()) return false;
+    if (review.status !== "pending" && review.status !== "conflicted") {
+      this.closeApproved(review.id);
+      return true;
+    }
+    const change = review.changes.find((candidate) => candidate.id === active.changeId);
+    if (change === undefined || change.proposalContent === null) {
+      this.closeApproved(review.id);
+      return true;
+    }
+    await this.open(review, change, active.mode);
+    return true;
+  }
+
+  public noteReview(review: Review): void {
+    if (
+      this.active?.reviewId === review.id &&
+      this.active.session.snapshot().revision === review.revision
+    ) {
+      this.active.revision = review.revision;
+    }
   }
 
   public focusHunk(index: number): void {
@@ -175,5 +239,14 @@ export class NativeEditorCoordinator {
   private disposeActive(): void {
     this.active?.pair.close();
     this.active = null;
+  }
+
+  private async runMutation<T>(action: () => Promise<T>): Promise<T> {
+    this.mutationDepth += 1;
+    try {
+      return await action();
+    } finally {
+      this.mutationDepth -= 1;
+    }
   }
 }

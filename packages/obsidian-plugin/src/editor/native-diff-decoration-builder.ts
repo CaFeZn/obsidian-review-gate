@@ -26,6 +26,7 @@ interface NativeDiffDecorationRequest {
   readonly base: string;
   readonly proposal: string;
   readonly side: NativeDiffSide;
+  readonly activeHunkLabel?: string | null;
 }
 
 interface NativeDiffDecorationContext {
@@ -33,6 +34,7 @@ interface NativeDiffDecorationContext {
   readonly cjkExclusions: TextRange[];
   readonly documentValue: Text;
   readonly side: NativeDiffSide;
+  readonly activeHunkLabel: string | null;
 }
 
 interface NativeChangedLineDecoration {
@@ -59,6 +61,7 @@ export function buildNativeDiffDecorations(
     cjkExclusions: [],
     documentValue,
     side: request.side,
+    activeHunkLabel: request.activeHunkLabel ?? null,
   };
   const hunks = diffEngine.diff(request.base, request.proposal, { contextLines: 0 }).hunks;
   addEqualLineDecorations(
@@ -83,6 +86,7 @@ export function buildNativeDiffDecorations(
             changedLines: lines,
             spacerLines,
             alignmentKeys: alignmentKeys(hunk, lines.length, spacerLines),
+            active: context.activeHunkLabel === nativeHunkLabel(hunk),
           }),
         );
       }
@@ -111,6 +115,7 @@ export function buildNativeDiffDecorations(
           changedLines: lines,
           spacerLines,
           alignmentKeys: alignmentKeys(hunk, lines.length, spacerLines),
+          active: context.activeHunkLabel === nativeHunkLabel(hunk),
         }),
       );
     }
@@ -180,9 +185,13 @@ function addChangedLineDecoration(
   ];
   if (change.first) classes.push("obsreview-native-hunk-start");
   if (change.last) classes.push("obsreview-native-hunk-end");
+  if (context.activeHunkLabel === nativeHunkLabel(change.hunk)) {
+    classes.push("obsreview-native-hunk-active");
+  }
   const attributes: Record<string, string> = {
     class: classes.join(" "),
     "data-obsreview-align-key": change.alignmentKey,
+    "data-obsreview-hunk-label": nativeHunkLabel(change.hunk),
   };
   if (change.first) attributes["data-obsreview-hunk"] = nativeHunkLabel(change.hunk);
   context.ranges.push(Decoration.line({ attributes }).range(documentLine.from));
@@ -201,11 +210,20 @@ function addAnchorDecoration(
   const line = context.documentValue.line(
     Math.min(context.documentValue.lines, Math.max(1, requested)),
   );
+  const classes = [
+    "obsreview-native-hunk-anchor",
+    "obsreview-native-hunk-start",
+    "obsreview-native-hunk-end",
+  ];
+  if (context.activeHunkLabel === nativeHunkLabel(hunk)) {
+    classes.push("obsreview-native-hunk-active");
+  }
   context.ranges.push(
     Decoration.line({
       attributes: {
-        class: "obsreview-native-hunk-anchor obsreview-native-hunk-start obsreview-native-hunk-end",
+        class: classes.join(" "),
         "data-obsreview-hunk": nativeHunkLabel(hunk),
+        "data-obsreview-hunk-label": nativeHunkLabel(hunk),
         "data-obsreview-align-key": nativeAlignmentKey(hunk, 0),
       },
     }).range(line.from),

@@ -24,16 +24,81 @@ test("proposal leaf header exposes save hunk navigation decisions and approval",
     "nextHunk",
     "acceptHunk",
     "rejectHunk",
+    "submitAcceptedBlocks",
     "approveReview",
   ]) {
     assert.match(givenPairSource, new RegExp(`t\\("${key}"\\)`, "u"));
   }
   assert.match(givenPairSource, /request\.onDecideHunk/u);
+  assert.match(givenPairSource, /request\.onSubmitAccepted/u);
   assert.match(givenPairSource, /request\.onApprove/u);
   assert.match(givenPairSource, /setAttribute\("role", "toolbar"\)/u);
   assert.match(
     givenPairSource,
     /setAttribute\("aria-label", t\("editableProposal"\)\)/u,
+  );
+});
+
+test("the automatic save hook debounces writes instead of persisting on every keystroke", async () => {
+  const givenPairSource = await readEditorSource("native-markdown-pair.ts");
+
+  // Given: Obsidian calls requestSave on every document update, including each
+  // intermediate state of an IME composition.
+  const hookIndex = givenPairSource.indexOf("public override requestSave");
+  const ctorIndex = givenPairSource.indexOf("public constructor(");
+  assert.notEqual(hookIndex, -1);
+  assert.notEqual(ctorIndex, -1);
+  const hookBody = givenPairSource.slice(hookIndex, ctorIndex);
+
+  // Then: the hook records the dirty state, refreshes the tab title, and defers
+  // the write, so typing stays responsive and a composition cannot be lost to a
+  // mid-keystroke reload.
+  assert.match(hookBody, /this\.dirty = true/u);
+  assert.match(hookBody, /this\.leaf\.updateHeader\(\)/u);
+  // The write is scheduled on the debouncing scheduler rather than performed
+  // inline, so continuous typing never writes mid-input.
+  assert.match(hookBody, /const scheduler = this\.scheduler\(\)/u);
+  assert.match(hookBody, /scheduler\.schedule\(\)/u);
+  assert.doesNotMatch(hookBody, /await this\.onSaveRequested/u);
+
+  // And: the deferred write still happens on its own, so an edit is never held in
+  // the editor until the user presses save.
+  assert.match(givenPairSource, /saveDebounceMs\s*=\s*2000/u);
+  assert.match(givenPairSource, /createNativeSaveScheduler\(\{/u);
+  assert.match(
+    givenPairSource,
+    /public override save\(\): Promise<void>[\s\S]*?scheduler\.schedule\(\)/u,
+  );
+
+  // And: the explicit path persists immediately and clears the marker.
+  assert.match(givenPairSource, /public async persist\(\): Promise<void>/u);
+  assert.match(givenPairSource, /await this\.onSaveRequested\(\)/u);
+  assert.match(givenPairSource, /markSaved/u);
+  // And: closing the pane flushes a pending edit instead of dropping it.
+  assert.match(givenPairSource, /onClose[\s\S]*?this\.saveScheduler\?\.cancel\(\);\n\s*if \(this\.dirty\) await this\.persist\(\);/u);
+  // The title carries the unsaved marker so a dirty draft is visible.
+  assert.match(givenPairSource, /t\("proposalUnsaved"\)/u);
+});
+
+test("single-page native review uses the same deferred save and close flush", async () => {
+  const givenPairSource = await readEditorSource("native-markdown-pair.ts");
+
+  assert.match(givenPairSource, /class ReviewUnifiedView extends ItemView/u);
+  assert.match(
+    givenPairSource,
+    /class ReviewUnifiedView[\s\S]*?createNativeSaveScheduler\(\{/u,
+  );
+  assert.match(
+    givenPairSource,
+    /class ReviewUnifiedView[\s\S]*?this\.saveScheduler\.schedule\(\)/u,
+  );
+  assert.match(
+    givenPairSource,
+    /class ReviewUnifiedView[\s\S]*?if \(this\.dirty\) await this\.persist\(\);/u,
+  );
+  assert.match(
+    givenPairSource,
+    /addAction\("save", t\("saveProposal"\), \(\) => void this\.persist\(\)\)/u,
   );
 });
 
@@ -116,6 +181,7 @@ test("native hunk focus replans against the live proposal", async () => {
 
   assert.notEqual(focusIndex, -1);
   assert.ok(livePlanIndex > focusIndex);
+  assert.match(givenDiffSource, /focusNativeHunk\(baseEditor, proposalEditor, blocks, index\)/u);
 });
 
 test("native alignment block widgets are provided by a state field", async () => {

@@ -10,6 +10,7 @@ interface NativeAlignmentSpacerRequest {
   readonly changedLines: readonly DiffLine[];
   readonly spacerLines: number;
   readonly alignmentKeys: readonly string[];
+  readonly active: boolean;
 }
 
 export function buildNativeAlignmentSpacerDecoration(
@@ -23,6 +24,7 @@ export function buildNativeAlignmentSpacerDecoration(
       request.spacerLines,
       request.alignmentKeys,
       label,
+      request.active,
     ),
     block: true,
     side: anchor.side,
@@ -38,6 +40,7 @@ class NativeDiffAlignmentWidget extends WidgetType {
     private readonly spacerLines: number,
     private readonly alignmentKeys: readonly string[],
     private readonly label: string | undefined,
+    private readonly active: boolean,
   ) {
     super();
   }
@@ -49,7 +52,8 @@ class NativeDiffAlignmentWidget extends WidgetType {
       widget.spacerLines === this.spacerLines &&
       widget.alignmentKeys.length === this.alignmentKeys.length &&
       widget.alignmentKeys.every((key, index) => key === this.alignmentKeys[index]) &&
-      widget.label === this.label
+      widget.label === this.label &&
+      widget.active === this.active
     );
   }
 
@@ -58,6 +62,7 @@ class NativeDiffAlignmentWidget extends WidgetType {
     const classes = ["obsreview-native-alignment-spacer", `is-${this.side}`];
     if (this.label !== undefined) classes.push("obsreview-native-hunk-start");
     classes.push("obsreview-native-hunk-end");
+    if (this.active) classes.push("obsreview-native-hunk-active");
     container.className = classes.join(" ");
     container.setAttribute("aria-hidden", "true");
     if (this.label !== undefined) {

@@ -2,6 +2,7 @@ import type { TranslationKey } from "./en";
 
 export const ZH_MESSAGES = {
   acceptHunk: "接受此变更块",
+  acceptedBlocksSubmitted: "已提交接受的变更块；其余变更块仍待审阅，可稍后继续。",
   actionFailed: "操作失败：{error}",
   agentLabel: "代理：{agent}",
   approveRefused: "批准被拒绝：{error}",
@@ -85,6 +86,7 @@ export const ZH_MESSAGES = {
     "保存操作只会更新外部审阅存储中的提案。只有执行批准后才会写入目标文件。",
   proposalUpdated: "提案已更新，目标文件仍未更改。",
   proposalUnsaved: "提案有未保存修改",
+  reviewAutoRefreshed: "审阅已更新，编辑器已自动刷新，请重试当前操作。",
   rebaseReview: "刷新 / 变基",
   recoveredTransactionsMany: "审阅门禁已恢复 {count} 个中断的事务。",
   recoveredTransactionsOne: "审阅门禁已恢复 {count} 个中断的事务。",
@@ -116,6 +118,7 @@ export const ZH_MESSAGES = {
   searchFileHistory: "搜索有审阅记录的文件路径",
   split: "并排",
   statusApproved: "已批准",
+  submitAcceptedBlocks: "提交已接受的变更块",
   statusCancelled: "已取消",
   statusConflicted: "有冲突",
   statusPending: "待审阅",

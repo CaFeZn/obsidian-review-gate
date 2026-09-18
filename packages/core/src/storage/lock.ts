@@ -218,7 +218,8 @@ function lockIoError(
 
 function isRetryableFileSystemError(error: unknown): boolean {
   return (
-    isNodeError(error) && ["EACCES", "EBUSY", "ENOTEMPTY", "EPERM"].includes(error.code ?? "")
+    isNodeError(error) &&
+    ["EACCES", "EBUSY", "ENOTEMPTY", "EPERM", "UNKNOWN"].includes(error.code ?? "")
   );
 }
 

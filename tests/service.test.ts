@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  JsDiffEngine,
   ReviewError,
   ReviewService,
   pendingReviewDirectory,
@@ -319,6 +320,187 @@ test("overlapping conflict keeps the current human content and drops the overlap
     assert.equal(reconciled.changes[0]?.baseContent, "one\nCURRENT\nthree\n");
     assert.equal(reconciled.changes[0]?.proposalContent, "one\nCURRENT\nthree\n");
     assert.equal(await readVaultFile(vault, "note.md"), "one\nCURRENT\nthree\n");
+  } finally {
+    await cleanupVault(vault);
+  }
+});
+
+test("submitting only accepted blocks writes a batch and keeps the rest pending", async () => {
+  const vault = await createVault();
+  try {
+    // Given: a note with two distant changed regions in one proposal.
+    const lines = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+    const base = lines.map((line) => `${line}\n`).join("");
+    const firstChanged = lines.map((line, index) => (index === 0 ? "A" : line));
+    const bothChanged = firstChanged.map((line, index) => (index === 10 ? "K" : line));
+    const proposal = bothChanged.map((line) => `${line}\n`).join("");
+    await writeVaultFile(vault, "note.md", base);
+    const service = await openService(vault);
+    const review = await service.submit({
+      changes: [{ target: "note.md", proposalContent: proposal }],
+    });
+
+    // When: the reader accepts only the first block and submits that batch.
+    const change = review.changes[0];
+    assert.ok(change);
+    const hunks = new JsDiffEngine().diff(base, proposal).hunks;
+    assert.equal(hunks.length, 2);
+    const firstHunk = hunks[0];
+    assert.ok(firstHunk);
+    await service.decideHunk(review.id, {
+      changeId: change.id,
+      hunkId: firstHunk.id,
+      decision: "accepted",
+      expectedRevision: review.revision,
+    });
+    const afterDecision = await service.get(review.id);
+    const result = await service.approve(review.id, {
+      onlyAccepted: true,
+      expectedRevision: afterDecision.revision,
+      actor: "obsidian-user",
+    });
+
+    // Then: only the accepted block reached the document.
+    assert.equal(
+      await readVaultFile(vault, "note.md"),
+      lines.map((line, index) => (index === 0 ? "A" : line)).map((line) => `${line}\n`).join(""),
+    );
+    // And: the review is still pending, with the remaining block rebased onto
+    // what was just written, so the next sitting continues from here.
+    assert.equal(result.review.status, "pending");
+    assert.equal(result.review.changes.length, 1);
+    assert.equal(result.review.changes[0]?.baseContent, await readVaultFile(vault, "note.md"));
+    assert.equal(result.review.changes[0]?.proposalContent, proposal);
+    assert.deepEqual(result.review.changes[0]?.hunkDecisions, {});
+  } finally {
+    await cleanupVault(vault);
+  }
+});
+
+test("a full batch of accepted blocks completes the review", async () => {
+  const vault = await createVault();
+  try {
+    const lines = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+    const base = lines.map((line) => `${line}\n`).join("");
+    const proposal = lines.map((line, index) => (index === 0 ? "A" : line)).map((line) => `${line}\n`).join("");
+    await writeVaultFile(vault, "note.md", base);
+    const service = await openService(vault);
+    const review = await service.submit({
+      changes: [{ target: "note.md", proposalContent: proposal }],
+    });
+    const change = review.changes[0];
+    assert.ok(change);
+    const hunk = new JsDiffEngine().diff(base, proposal).hunks[0];
+    assert.ok(hunk);
+    await service.decideHunk(review.id, {
+      changeId: change.id,
+      hunkId: hunk.id,
+      decision: "accepted",
+      expectedRevision: review.revision,
+    });
+    const afterDecision = await service.get(review.id);
+
+    // When: every block was accepted, the review finishes instead of staying open.
+    const result = await service.approve(review.id, {
+      onlyAccepted: true,
+      expectedRevision: afterDecision.revision,
+    });
+
+    assert.equal(result.review.status, "approved");
+    assert.equal(await readVaultFile(vault, "note.md"), proposal);
+  } finally {
+    await cleanupVault(vault);
+  }
+});
+
+test("partial batches retain the earlier target backup for the review", async () => {
+  const vault = await createVault();
+  try {
+    const lines = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+    const base = lines.map((line) => `${line}\n`).join("");
+    const proposal = lines
+      .map((line, index) => (index === 0 ? "A" : index === 10 ? "K" : line))
+      .map((line) => `${line}\n`)
+      .join("");
+    await writeVaultFile(vault, "note.md", base);
+    const service = await openService(vault);
+    const review = await service.submit({
+      changes: [{ target: "note.md", proposalContent: proposal }],
+    });
+    const change = review.changes[0];
+    assert.ok(change);
+    const diff = new JsDiffEngine().diff(base, proposal);
+    const firstHunk = diff.hunks[0];
+    assert.ok(firstHunk);
+
+    await service.decideHunk(review.id, {
+      changeId: change.id,
+      hunkId: firstHunk.id,
+      decision: "accepted",
+      expectedRevision: review.revision,
+    });
+    const firstBatch = await service.approve(review.id, { onlyAccepted: true });
+    assert.equal(firstBatch.review.status, "pending");
+    const firstWritten = await readVaultFile(vault, "note.md");
+    const backupDirectory = path.join(
+      vault,
+      ".obsreview",
+      "trash",
+      review.id,
+      ".backups",
+      change.id,
+    );
+    assert.equal(await readFile(path.join(backupDirectory, "target"), "utf8"), base);
+
+    const pending = await service.get(review.id);
+    const remainingChange = pending.changes[0];
+    assert.ok(remainingChange);
+    const remainingHunk = new JsDiffEngine()
+      .diff(remainingChange.baseContent ?? "", remainingChange.proposalContent ?? "")
+      .hunks[0];
+    assert.ok(remainingHunk);
+    await service.decideHunk(review.id, {
+      changeId: remainingChange.id,
+      hunkId: remainingHunk.id,
+      decision: "accepted",
+      expectedRevision: pending.revision,
+    });
+    const final = await service.approve(review.id, { onlyAccepted: true });
+
+    assert.equal(final.review.status, "approved");
+    assert.equal(await readVaultFile(vault, "note.md"), proposal);
+    const backupNames = await readdir(backupDirectory);
+    const retainedBatchBackups = backupNames.filter((name) => name.startsWith("target."));
+    assert.equal(retainedBatchBackups.length, 1);
+    assert.equal(
+      await readFile(path.join(backupDirectory, retainedBatchBackups[0] as string), "utf8"),
+      firstWritten,
+    );
+  } finally {
+    await cleanupVault(vault);
+  }
+});
+
+test("submitting with no accepted block is refused and writes nothing", async () => {
+  const vault = await createVault();
+  try {
+    await writeVaultFile(vault, "note.md", "one\ntwo\nthree\n");
+    const service = await openService(vault);
+    const review = await service.submit({
+      changes: [{ target: "note.md", proposalContent: "one\nTWO\nthree\n" }],
+    });
+
+    // When: nothing has been accepted yet.
+    await assert.rejects(
+      service.approve(review.id, { onlyAccepted: true }),
+      (error: unknown) => error instanceof ReviewError && error.code === "INVALID_ARGUMENTS",
+    );
+
+    // Then: the target is untouched and the review still has its proposal.
+    assert.equal(await readVaultFile(vault, "note.md"), "one\ntwo\nthree\n");
+    const pending = await service.get(review.id);
+    assert.equal(pending.status, "pending");
+    assert.equal(pending.changes[0]?.proposalContent, "one\nTWO\nthree\n");
   } finally {
     await cleanupVault(vault);
   }

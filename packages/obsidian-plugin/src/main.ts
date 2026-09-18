@@ -42,7 +42,12 @@ export default class ObsidianReviewGatePlugin extends Plugin {
     this.register(restoreFileSystem);
     const opened = await ReviewService.open(vaultRoot, { storageBase });
     this.service = opened.service;
-    const operations = new ReviewSessionOperations(opened.service, async () => {
+    const operations = new ReviewSessionOperations(opened.service, async (review, options) => {
+      if (options?.refreshNativeEditor === true) {
+        await this.nativeEditor?.refresh(review);
+      } else {
+        this.nativeEditor?.noteReview(review);
+      }
       await this.refreshViews();
     });
     const nativeEditor = new NativeEditorCoordinator({
@@ -89,6 +94,7 @@ export default class ObsidianReviewGatePlugin extends Plugin {
       if (activeReviewId !== null) {
         const review = await opened.service.get(activeReviewId);
         if (review.status === "approved") nativeEditor.closeApproved(review.id);
+        else await nativeEditor.refresh(review);
       }
       await this.refreshViews();
     });

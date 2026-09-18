@@ -18,12 +18,51 @@ import type {
   NativeEditorPairUpdate,
 } from "./native-editor-coordinator";
 import { createMainWindowReviewLeaves } from "./native-leaf-allocation";
+import {
+  createNativeSaveScheduler,
+  type NativeSaveScheduler,
+} from "./native-save-scheduler";
 import { isNativeViewMounted } from "./native-view-lifecycle";
 
 class ReviewMarkdownView extends MarkdownView {
+  /**
+   * Delay before a pending edit is written. Long enough that continuous typing
+   * and IME composition never trigger a write mid-input, short enough that the
+   * review catches up on its own like a normal Obsidian file.
+   */
+  private static readonly saveDebounceMs = 2000;
+
+  private dirty = false;
+  private saveScheduler: NativeSaveScheduler | null = null;
+
+  /**
+   * Obsidian calls requestSave on every document update, including each
+   * intermediate state of an IME composition. Persisting synchronously here
+   * wrote the review on every keystroke, which made typing sluggish and could
+   * drop an in-progress composition, so the write is deferred until typing
+   * pauses, matching how Obsidian saves its own files.
+   */
   public override requestSave = (): void => {
-    void this.onSaveRequested?.();
+    const scheduler = this.scheduler();
+    if (scheduler === null) return;
+    this.markDirty();
+    scheduler.schedule();
   };
+
+  private markDirty(): void {
+    if (this.dirty) return;
+    this.dirty = true;
+    this.leaf.updateHeader();
+  }
+
+  private scheduler(): NativeSaveScheduler | null {
+    if (this.onSaveRequested === null) return null;
+    this.saveScheduler ??= createNativeSaveScheduler({
+      delayMs: ReviewMarkdownView.saveDebounceMs,
+      persist: () => this.persist(),
+    });
+    return this.saveScheduler;
+  }
 
   public constructor(
     leaf: WorkspaceLeaf,
@@ -36,16 +75,44 @@ class ReviewMarkdownView extends MarkdownView {
   }
 
   public override getDisplayText(): string {
-    return this.title;
+    return this.dirty ? `${this.title} · ${t("proposalUnsaved")}` : this.title;
   }
 
+  /** Obsidian save requests are debounced; the proposal toolbar flushes directly. */
   public override save(): Promise<void> {
-    // Obsidian's editor:save-file command (Ctrl+S) calls view.save(), so a
-    // no-op here made Ctrl+S silently do nothing on the editable proposal.
-    return this.onSaveRequested?.() ?? Promise.resolve();
+    // Obsidian may call save() directly for editor updates instead of routing
+    // them through requestSave(). Keep that path debounced too; the explicit
+    // proposal toolbar still calls persist() and flushes immediately.
+    const scheduler = this.scheduler();
+    if (scheduler === null) return Promise.resolve();
+    this.markDirty();
+    scheduler.schedule();
+    return Promise.resolve();
+  }
+
+  public async persist(): Promise<void> {
+    if (this.onSaveRequested === null) return;
+    this.saveScheduler?.cancel();
+    await this.onSaveRequested();
+    // A later keystroke may have arrived while the write was in flight; keep the
+    // unsaved marker in that case, because its own deferred write is still due.
+    if (this.saveScheduler?.hasPending() !== true) this.markSaved();
+  }
+
+  public markSaved(): void {
+    if (!this.dirty) return;
+    this.dirty = false;
+    this.leaf.updateHeader();
+  }
+
+  public isDirty(): boolean {
+    return this.dirty;
   }
 
   public override async onClose(): Promise<void> {
+    // Never drop an unsaved edit when the pane closes.
+    this.saveScheduler?.cancel();
+    if (this.dirty) await this.persist();
     this.onClosed();
     await super.onClose();
   }
@@ -101,7 +168,7 @@ async function createNativeSplitReview(
     icon: string,
     title: string,
     command: () => Promise<void>,
-  ): void => {
+  ): HTMLElement => {
     const action = proposalView.addAction(icon, title, () => {
       void runCommand(command);
     });
@@ -110,6 +177,14 @@ async function createNativeSplitReview(
     action.parentElement?.setAttribute("role", "toolbar");
     action.parentElement?.setAttribute("aria-label", t("editableProposal"));
     actionElements.push(action);
+    return action;
+  };
+  let submitAcceptedAction: HTMLElement | null = null;
+  const updateSubmitAcceptedAction = (): void => {
+    if (submitAcceptedAction === null) return;
+    const hidden = request.hasAcceptedHunks() !== true;
+    submitAcceptedAction.style.display = hidden ? "none" : "";
+    submitAcceptedAction.setAttribute("aria-hidden", String(hidden));
   };
   const focusRelativeHunk = (delta: number): void => {
     const hunkCount = planNativeDiffBlocks(
@@ -128,11 +203,20 @@ async function createNativeSplitReview(
     );
     if (update === null) return;
     applyPairUpdate(proposalView, update);
+    // The decision was persisted as part of the hunk write, so the draft is no
+    // longer pending.
+    proposalView.markSaved();
     hunkIndex = update.hunkIndex;
     diffController?.focusHunk(hunkIndex);
+    updateSubmitAcceptedAction();
   };
 
-  saveFromCommand = () => runCommand(() => request.onSave(proposalView.getViewData()));
+  const persistProposal = async (): Promise<void> => {
+    await request.onSave(proposalView.getViewData());
+    proposalView.markSaved();
+  };
+
+  saveFromCommand = () => runCommand(() => persistProposal());
 
   try {
     await baseLeaf.open(baseView);
@@ -148,7 +232,7 @@ async function createNativeSplitReview(
         request.onModeChange?.("unified", proposalView.getViewData()),
       );
       addProposalAction("save", t("saveProposal"), () =>
-        request.onSave(proposalView.getViewData()),
+        persistProposal(),
       );
       addProposalAction("arrow-up", t("previousHunk"), async () =>
         focusRelativeHunk(-1),
@@ -158,10 +242,19 @@ async function createNativeSplitReview(
       );
       addProposalAction("check", t("acceptHunk"), () => decideHunk("accepted"));
       addProposalAction("x", t("rejectHunk"), () => decideHunk("rejected"));
+      submitAcceptedAction = addProposalAction(
+        "check-circle-2",
+        t("submitAcceptedBlocks"),
+        async () => {
+          const submitted = await request.onSubmitAccepted(proposalView.getViewData());
+          if (submitted) closePair();
+        },
+      );
       addProposalAction("file-check-2", t("approveReview"), async () => {
         const approved = await request.onApprove(proposalView.getViewData());
         if (approved) closePair();
       });
+      updateSubmitAcceptedAction();
     } else {
       setReadOnly(proposalView);
     }
@@ -193,6 +286,7 @@ async function createNativeSplitReview(
       !closed &&
       isNativeViewMounted(baseView.containerEl) &&
       isNativeViewMounted(proposalView.containerEl),
+    isDirty: () => proposalView.isDirty(),
     reveal: async () => {
       await app.workspace.revealLeaf(baseLeaf);
       await app.workspace.revealLeaf(proposalLeaf);
@@ -206,9 +300,14 @@ async function createNativeSplitReview(
 }
 
 class ReviewUnifiedView extends ItemView {
+  /** Keep single-page editing consistent with the split Markdown proposal. */
+  private static readonly saveDebounceMs = 2000;
+
   private proposalContent: string;
   private diffHost: HTMLElement | null = null;
   private editorController: MergeEditorController | null = null;
+  private dirty = false;
+  private readonly saveScheduler: NativeSaveScheduler;
 
   public constructor(
     leaf: WorkspaceLeaf,
@@ -218,6 +317,10 @@ class ReviewUnifiedView extends ItemView {
   ) {
     super(leaf);
     this.proposalContent = request.proposalContent;
+    this.saveScheduler = createNativeSaveScheduler({
+      delayMs: ReviewUnifiedView.saveDebounceMs,
+      persist: () => this.persist(),
+    });
   }
 
   public override getViewType(): string {
@@ -225,7 +328,7 @@ class ReviewUnifiedView extends ItemView {
   }
 
   public override getDisplayText(): string {
-    return this.title;
+    return this.dirty ? `${this.title} · ${t("proposalUnsaved")}` : this.title;
   }
 
   public override async onOpen(): Promise<void> {
@@ -234,12 +337,14 @@ class ReviewUnifiedView extends ItemView {
       this.addAction("layout", t("split"), () =>
         void this.request.onModeChange?.("split", this.getProposal()),
       );
-      this.addAction("save", t("saveProposal"), () => void this.save());
+      this.addAction("save", t("saveProposal"), () => void this.persist());
     }
     this.render();
   }
 
   public override async onClose(): Promise<void> {
+    this.saveScheduler.cancel();
+    if (this.dirty) await this.persist();
     this.editorController?.destroy();
     this.editorController = null;
     this.onClosed();
@@ -253,6 +358,10 @@ class ReviewUnifiedView extends ItemView {
       behavior: "smooth",
       block: "center",
     });
+  }
+
+  public isDirty(): boolean {
+    return this.dirty;
   }
 
   private render(): void {
@@ -285,6 +394,8 @@ class ReviewUnifiedView extends ItemView {
       "unified",
       (proposal) => {
         this.proposalContent = proposal;
+        this.markDirty();
+        this.saveScheduler.schedule();
         this.renderDiff();
       },
     );
@@ -293,6 +404,8 @@ class ReviewUnifiedView extends ItemView {
       textarea.value = this.proposalContent;
       textarea.addEventListener("input", () => {
         this.proposalContent = textarea.value;
+        this.markDirty();
+        this.saveScheduler.schedule();
         this.renderDiff();
       });
     }
@@ -324,9 +437,23 @@ class ReviewUnifiedView extends ItemView {
     return this.editorController?.getProposal() ?? this.proposalContent;
   }
 
-  private async save(): Promise<void> {
+  private async persist(): Promise<void> {
     this.proposalContent = this.getProposal();
     await this.request.onSave(this.proposalContent);
+    if (this.saveScheduler.hasPending() !== true) this.markSaved();
+  }
+
+  private markDirty(): void {
+    if (!this.dirty) {
+      this.dirty = true;
+      this.leaf.updateHeader();
+    }
+  }
+
+  private markSaved(): void {
+    if (!this.dirty) return;
+    this.dirty = false;
+    this.leaf.updateHeader();
   }
 }
 
@@ -359,6 +486,7 @@ async function createNativeUnifiedReview(
   };
   return {
     isOpen: () => !closed && isNativeViewMounted(view.containerEl),
+    isDirty: () => view.isDirty(),
     reveal: async () => {
       await app.workspace.revealLeaf(leaf);
     },

@@ -435,6 +435,7 @@ export class ReviewGateView extends ItemView {
           new Notice(t("reviewRebased"));
           await this.refresh();
         } catch (error) {
+          if (await this.refreshAfterRevisionConflict(error)) return;
           new Notice(t("automaticRebaseUnsafe", { error: message(error) }));
           await this.refresh();
         }
@@ -455,6 +456,33 @@ export class ReviewGateView extends ItemView {
 
   private renderFinalActions(review: Review): void {
     const footer = this.contentEl.createDiv({ cls: "obsreview-final-actions" });
+    if (hasAcceptedHunks(review)) {
+      // Batching: write what has been accepted and keep reading the rest later.
+      addButton(footer, t("submitAcceptedBlocks"), async () => {
+        try {
+          const result = await this.service.approve(review.id, {
+            onlyAccepted: true,
+            expectedRevision: review.revision,
+            actor: "obsidian-user",
+          });
+          if (result.review.status === "pending") {
+            new Notice(t("acceptedBlocksSubmitted"));
+          } else {
+            new Notice(
+              result.maintenancePending === true
+                ? t("reviewAppliedMaintenancePending")
+                : t("reviewApproved"),
+            );
+          }
+          if (result.review.status !== "pending") this.selectedReviewId = null;
+          await this.refresh();
+        } catch (error) {
+          if (await this.refreshAfterRevisionConflict(error)) return;
+          new Notice(t("approveRefused", { error: message(error) }));
+          await this.refresh();
+        }
+      });
+    }
     addButton(footer, t("approveReview"), async () => {
       try {
         const result = await this.service.approve(review.id, {
@@ -469,6 +497,7 @@ export class ReviewGateView extends ItemView {
         this.selectedReviewId = null;
         await this.refresh();
       } catch (error) {
+        if (await this.refreshAfterRevisionConflict(error)) return;
         new Notice(t("approveRefused", { error: message(error) }));
         await this.refresh();
       }
@@ -480,13 +509,18 @@ export class ReviewGateView extends ItemView {
         confirmationText: t("rejectReview"),
         dangerous: false,
         action: async () => {
-          await this.service.reject(review.id, {
-            expectedRevision: review.revision,
-            actor: "obsidian-user",
-          });
-          new Notice(t("rejectedReviewNotice"));
-          this.selectedReviewId = null;
-          await this.refresh();
+          try {
+            await this.service.reject(review.id, {
+              expectedRevision: review.revision,
+              actor: "obsidian-user",
+            });
+            new Notice(t("rejectedReviewNotice"));
+            this.selectedReviewId = null;
+            await this.refresh();
+          } catch (error) {
+            if (await this.refreshAfterRevisionConflict(error)) return;
+            throw error;
+          }
         },
       }).open();
     });
@@ -517,9 +551,10 @@ export class ReviewGateView extends ItemView {
           : t("hunkRejected"),
       );
       await this.refresh();
-    } catch (error) {
-      new Notice(t("hunkDecisionFailed", { error: message(error) }));
-      await this.refresh();
+      } catch (error) {
+        if (await this.refreshAfterRevisionConflict(error)) return;
+        new Notice(t("hunkDecisionFailed", { error: message(error) }));
+        await this.refresh();
     }
   }
 
@@ -530,18 +565,23 @@ export class ReviewGateView extends ItemView {
       confirmationText: t("forceApply"),
       dangerous: true,
       action: async () => {
-        const result = await this.service.approve(review.id, {
-          force: true,
-          expectedRevision: review.revision,
-          actor: "obsidian-user",
-        });
-        new Notice(
-          result.maintenancePending === true
-            ? t("conflictedForceAppliedMaintenancePending")
-            : t("conflictedForceApplied"),
-        );
-        this.selectedReviewId = null;
-        await this.refresh();
+        try {
+          const result = await this.service.approve(review.id, {
+            force: true,
+            expectedRevision: review.revision,
+            actor: "obsidian-user",
+          });
+          new Notice(
+            result.maintenancePending === true
+              ? t("conflictedForceAppliedMaintenancePending")
+              : t("conflictedForceApplied"),
+          );
+          this.selectedReviewId = null;
+          await this.refresh();
+        } catch (error) {
+          if (await this.refreshAfterRevisionConflict(error)) return;
+          throw error;
+        }
       },
     }).open();
   }
@@ -554,6 +594,13 @@ export class ReviewGateView extends ItemView {
     this.hunkIndex = (this.hunkIndex + delta + elements.length) % elements.length;
     elements[this.hunkIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
     this.focusNativeHunk(this.hunkIndex);
+  }
+
+  private async refreshAfterRevisionConflict(error: unknown): Promise<boolean> {
+    if (!(error instanceof ReviewError) || error.code !== "REVISION_CONFLICT") return false;
+    await this.refresh();
+    new Notice(t("reviewAutoRefreshed"));
+    return true;
   }
 
   /** A narrow sidebar cannot show two readable columns. */
@@ -632,6 +679,18 @@ function operationSymbol(operation: ReviewChange["operation"]): string {
 
 function isTerminal(review: Review): boolean {
   return review.status === "approved" || review.status === "rejected" || review.status === "cancelled";
+}
+
+/**
+ * True when at least one change block was explicitly accepted, which is what
+ * makes a partial submission meaningful.
+ */
+function hasAcceptedHunks(review: Review): boolean {
+  return review.changes.some((change) =>
+    Object.values(change.hunkDecisions).some(
+      (decision) => decision.decision === "accepted",
+    ),
+  );
 }
 
 function tabLabel(tab: ReviewTab): string {

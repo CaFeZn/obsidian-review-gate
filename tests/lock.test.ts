@@ -198,7 +198,7 @@ class TransientOwnerReadFileSystem extends NodeReviewFileSystem {
 }
 
 class TransientOwnerReadError extends Error {
-  public readonly code = "EPERM";
+  public readonly code = "UNKNOWN";
 
   public constructor() {
     super("Owner metadata is transiently unreadable.");

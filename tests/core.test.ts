@@ -11,6 +11,7 @@ import {
   createReviewId,
   normalizeVaultRelativeTarget,
   rebaseChange,
+  planPartialCommit,
   rebaseChangeWithCurrentPriority,
   resolveSafeTarget,
   sha256,
@@ -228,6 +229,194 @@ test("current-priority rebase still merges disjoint agent edits", () => {
   // Then: the current content is the new base and the agent edit survives.
   assert.equal(reconciled.baseContent, "one\ntwo\nthree\nFOUR\n");
   assert.equal(reconciled.proposalContent, "ONE\ntwo\nthree\nFOUR\n");
+});
+
+test("a partially accepted change commits only its accepted hunks", () => {
+  // Given: a document with two changed regions far enough apart to stay
+  // separate hunks, where only the first hunk has been accepted so far.
+  const base = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"].map((line) => `${line}\n`).join("");
+  const proposal = ["A", "b", "c", "d", "e", "f", "g", "h", "i", "j", "K", "l"].map((line) => `${line}\n`).join("");
+  const engine = new JsDiffEngine();
+  const hunks = engine.diff(base, proposal).hunks;
+  assert.equal(hunks.length, 2);
+  const first = hunks[0];
+  assert.ok(first);
+  const change: ReviewChange = {
+    id: "0001",
+    operation: "modify",
+    target: "note.md",
+    baseHash: sha256(base),
+    baseContent: base,
+    proposalContent: proposal,
+    proposalHash: sha256(proposal),
+    hunkDecisions: {
+      [first.id]: {
+        decision: "accepted",
+        at: new Date().toISOString(),
+        baseHash: sha256(base),
+        proposalHash: sha256(proposal),
+      },
+    },
+  };
+
+  // When: the review is split into a now-part and a later-part.
+  const plan = planPartialCommit([change], engine);
+
+  // Then: the committed part contains only the accepted hunk.
+  assert.equal(plan.commit.length, 1);
+  assert.equal(
+    plan.commit[0]?.proposalContent,
+    ["A", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"].map((line) => `${line}\n`).join(""),
+  );
+  assert.deepEqual(plan.commit[0]?.hunkDecisions, {});
+
+  // And: the remnant keeps the untouched hunk, rebased onto what was written,
+  // so the next review session sees only the remaining change.
+  assert.equal(plan.remnant.length, 1);
+  assert.equal(
+    plan.remnant[0]?.baseContent,
+    ["A", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"].map((line) => `${line}\n`).join(""),
+  );
+  assert.equal(plan.remnant[0]?.proposalContent, proposal);
+});
+
+test("a change with no accepted hunk is left entirely for later", () => {
+  // Given: a change whose only hunk is still undecided.
+  const base = "one\ntwo\nthree\n";
+  const proposal = "one\nTWO\nthree\n";
+  const engine = new JsDiffEngine();
+  const change: ReviewChange = {
+    id: "0001",
+    operation: "modify",
+    target: "note.md",
+    baseHash: sha256(base),
+    baseContent: base,
+    proposalContent: proposal,
+    proposalHash: sha256(proposal),
+    hunkDecisions: {},
+  };
+
+  // When: a partial commit is planned.
+  const plan = planPartialCommit([change], engine);
+
+  // Then: nothing is committed and the change stays pending untouched.
+  assert.deepEqual(plan.commit, []);
+  assert.equal(plan.remnant.length, 1);
+  assert.equal(plan.remnant[0]?.proposalContent, proposal);
+  assert.equal(plan.remnant[0]?.baseContent, base);
+});
+
+test("a change with every hunk accepted commits whole", () => {
+  // Given: a change whose hunks were all accepted.
+  const base = "one\ntwo\nthree\n";
+  const proposal = "one\nTWO\nthree\n";
+  const engine = new JsDiffEngine();
+  const hunk = engine.diff(base, proposal).hunks[0];
+  assert.ok(hunk);
+  const change: ReviewChange = {
+    id: "0001",
+    operation: "modify",
+    target: "note.md",
+    baseHash: sha256(base),
+    baseContent: base,
+    proposalContent: proposal,
+    proposalHash: sha256(proposal),
+    hunkDecisions: {
+      [hunk.id]: {
+        decision: "accepted",
+        at: new Date().toISOString(),
+        baseHash: sha256(base),
+        proposalHash: sha256(proposal),
+      },
+    },
+  };
+
+  // When: a partial commit is planned.
+  const plan = planPartialCommit([change], engine);
+
+  // Then: the whole change is committed and nothing is left over, so the review
+  // finishes instead of staying permanently pending.
+  assert.equal(plan.commit.length, 1);
+  assert.equal(plan.commit[0]?.proposalContent, proposal);
+  assert.deepEqual(plan.remnant, []);
+});
+
+test("an accepted create commits whole because it has no partial state", () => {
+  // Given: a brand-new file. Its base is empty, so the whole content is one
+  // hunk and there is no meaningful half-written state.
+  const base = "";
+  const proposal = "first\nsecond\n";
+  const engine = new JsDiffEngine();
+  const hunk = engine.diff(base, proposal).hunks[0];
+  assert.ok(hunk);
+  const change: ReviewChange = {
+    id: "0001",
+    operation: "create",
+    target: "new.md",
+    baseHash: null,
+    baseContent: null,
+    proposalContent: proposal,
+    proposalHash: sha256(proposal),
+    hunkDecisions: {
+      [hunk.id]: {
+        decision: "accepted",
+        at: new Date().toISOString(),
+        baseHash: sha256(base),
+        proposalHash: sha256(proposal),
+      },
+    },
+  };
+
+  // When: its only block was accepted.
+  const plan = planPartialCommit([change], engine);
+
+  // Then: the file is created whole and nothing is left pending.
+  assert.equal(plan.commit.length, 1);
+  assert.equal(plan.commit[0]?.proposalContent, proposal);
+  assert.deepEqual(plan.remnant, []);
+});
+
+test("a rename with only some blocks accepted waits for a whole submission", () => {
+  // Given: a rename whose two changed regions are only partly accepted. A rename
+  // must move the file in one step, so it cannot be split across batches.
+  const lines = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+  const base = lines.map((line) => `${line}\n`).join("");
+  const proposal = lines
+    .map((line, index) => (index === 0 ? "A" : index === 10 ? "K" : line))
+    .map((line) => `${line}\n`)
+    .join("");
+  const engine = new JsDiffEngine();
+  const hunks = engine.diff(base, proposal).hunks;
+  assert.equal(hunks.length, 2);
+  const onlyFirst = hunks[0];
+  assert.ok(onlyFirst);
+  const change: ReviewChange = {
+    id: "0001",
+    operation: "rename",
+    target: "old.md",
+    newTarget: "new.md",
+    baseHash: sha256(base),
+    baseContent: base,
+    proposalContent: proposal,
+    proposalHash: sha256(proposal),
+    hunkDecisions: {
+      [onlyFirst.id]: {
+        decision: "accepted",
+        at: new Date().toISOString(),
+        baseHash: sha256(base),
+        proposalHash: sha256(proposal),
+      },
+    },
+  };
+
+  // When: only one of the rename's two blocks is accepted.
+  const plan = planPartialCommit([change], engine);
+
+  // Then: it is carried over whole rather than half-applied.
+  assert.deepEqual(plan.commit, []);
+  assert.equal(plan.remnant.length, 1);
+  assert.equal(plan.remnant[0]?.newTarget, "new.md");
+  assert.equal(plan.remnant[0]?.proposalContent, proposal);
 });
 
 test("vendored Myers adapter reconstructs both sides across deterministic fuzz cases", () => {

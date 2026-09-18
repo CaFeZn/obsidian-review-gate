@@ -9,6 +9,7 @@ export interface ParsedArguments {
 const BOOLEAN_FLAGS = new Set([
   "json",
   "force",
+  "only-accepted",
   "conflict-context",
   "help",
   "version",
