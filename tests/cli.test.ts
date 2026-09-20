@@ -666,3 +666,158 @@ test("CLI append refuses unrelated target drift without creating conflicted stat
     await cleanupVault(vault);
   }
 });
+
+test("CLI semantic append batches approve independently and revert safely", async () => {
+  const vault = await createVault();
+  const reviewHome = await createVault();
+  try {
+    await writeVaultFile(vault, "tasks/A.md", "status: open\n");
+    await writeVaultFile(vault, "tasks/B.md", "status: open\n");
+    await writeVaultFile(vault, "工作日志/日报/20260920.md", "# 日报\n\n## 当日进度\n\n- existing\n");
+
+    const manifestA = path.join(vault, "batch-a.json");
+    const manifestB = path.join(vault, "batch-b.json");
+    await writeFile(
+      manifestA,
+      JSON.stringify({
+        batchId: "batch-a",
+        changes: [
+          { target: "tasks/A.md", content: "status: done\n" },
+          {
+            operation: "append",
+            target: "工作日志/日报/20260920.md",
+            anchor: "## 当日进度",
+            content: "- [[A]]：完成 A\n",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    await writeFile(
+      manifestB,
+      JSON.stringify({
+        batchId: "batch-b",
+        changes: [
+          { target: "tasks/B.md", content: "status: done\n" },
+          {
+            operation: "append",
+            target: "工作日志/日报/20260920.md",
+            anchor: "## 当日进度",
+            content: "- [[B]]：完成 B\n",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const batchA = runCli(["submit", "--vault", vault, "--manifest", manifestA, "--json"], reviewHome);
+    const batchB = runCli(["submit", "--vault", vault, "--manifest", manifestB, "--json"], reviewHome);
+    assert.equal(batchA.status, 0, batchA.stderr);
+    assert.equal(batchB.status, 0, batchB.stderr);
+    assert.equal(batchA.document["batchId"], "batch-a");
+    assert.equal(batchB.document["batchId"], "batch-b");
+
+    const approveA = runCli([
+      "approve",
+      String(batchA.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(approveA.status, 0, approveA.stderr);
+    assert.equal(await readVaultFile(vault, "tasks/A.md"), "status: done\n");
+    assert.equal(await readVaultFile(vault, "tasks/B.md"), "status: open\n");
+    assert.equal(
+      await readVaultFile(vault, "工作日志/日报/20260920.md"),
+      "# 日报\n\n## 当日进度\n\n- existing\n- [[A]]：完成 A\n",
+    );
+
+    // The compensating review must remain semantic too, so it can coexist with
+    // a later batch that is still waiting for approval on the same daily note.
+    const revertA = runCli([
+      "revert",
+      String(batchA.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(revertA.status, 0, revertA.stderr);
+    assert.equal(revertA.document["revertsReviewId"], batchA.document["reviewId"]);
+    assert.equal(revertA.document["batchId"], "batch-a");
+    const approveB = runCli([
+      "approve",
+      String(batchB.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(approveB.status, 0, approveB.stderr);
+    const approveRevert = runCli([
+      "approve",
+      String(revertA.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(approveRevert.status, 0, approveRevert.stderr);
+    assert.equal(await readVaultFile(vault, "tasks/A.md"), "status: open\n");
+    assert.equal(await readVaultFile(vault, "tasks/B.md"), "status: done\n");
+    assert.equal(
+      await readVaultFile(vault, "工作日志/日报/20260920.md"),
+      "# 日报\n\n## 当日进度\n\n- existing\n- [[B]]：完成 B\n",
+    );
+  } finally {
+    await cleanupVault(reviewHome);
+    await cleanupVault(vault);
+  }
+});
+
+test("CLI revert refuses a semantic fragment changed after approval", async () => {
+  const vault = await createVault();
+  const reviewHome = await createVault();
+  try {
+    const target = "工作日志/日报/20260920.md";
+    await writeVaultFile(vault, target, "# 日报\n\n## 当日进度\n\n- existing\n");
+    const fragment = path.join(vault, "fragment.md");
+    await writeFile(fragment, "- [[A]]：完成 A\n", "utf8");
+
+    const submit = runCli([
+      "append",
+      "--vault",
+      vault,
+      "--target",
+      target,
+      "--file",
+      fragment,
+      "--anchor",
+      "## 当日进度",
+      "--json",
+    ], reviewHome);
+    assert.equal(submit.status, 0, submit.stderr);
+    const approve = runCli([
+      "approve",
+      String(submit.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+    assert.equal(approve.status, 0, approve.stderr);
+
+    const edited = "# 日报\n\n## 当日进度\n\n- existing\n- [[A]]：完成 A（人工补充）\n";
+    await writeVaultFile(vault, target, edited);
+    const revert = runCli([
+      "revert",
+      String(submit.document["reviewId"]),
+      "--vault",
+      vault,
+      "--json",
+    ], reviewHome);
+
+    assert.equal(revert.status, 4);
+    assert.equal(revert.document["code"], "REBASE_CONFLICT");
+    assert.equal(await readVaultFile(vault, target), edited);
+  } finally {
+    await cleanupVault(reviewHome);
+    await cleanupVault(vault);
+  }
+});

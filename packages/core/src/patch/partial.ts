@@ -34,7 +34,7 @@ export function planPartialCommit(
   const remnant: ReviewChange[] = [];
 
   for (const change of changes) {
-    if (change.proposalContent === null || change.operation === "delete") {
+    if (change.proposalContent === null || change.operation === "delete" || change.operation === "append") {
       remnant.push(change);
       continue;
     }

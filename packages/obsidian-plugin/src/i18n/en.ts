@@ -68,6 +68,8 @@ export const EN_MESSAGES = {
   oneFile: "{count} file",
   allReviews: "All reviews",
   openReviewGate: "Open Review Gate",
+  operationAppend: "APPEND",
+  operationRemove: "REMOVE APPEND",
   operationCreate: "CREATE",
   operationDelete: "DELETE",
   operationModify: "MODIFY",

@@ -9,6 +9,7 @@ import { inspectReviewConflicts } from "../conflict/check";
 import { reconcileReviewWithCurrentPriority } from "../conflict/rebase";
 import { JsDiffEngine } from "../diff/jsdiff-engine";
 import { planPartialCommit } from "./partial";
+import { materializeSemanticAppend } from "./semantic-append";
 import { resolveSafeTarget, isPathInside } from "../path/safe-path";
 import { ReviewStore } from "../storage/review-store";
 import { atomicWriteFile, exists, fsyncDirectory } from "../storage/atomic";
@@ -101,6 +102,8 @@ export async function approveReview(
           { reviewId, status: review.status },
         );
       }
+
+      review = await materializeSemanticAppends(store.vaultRoot, review);
 
       // Batching: write only the accepted hunks and keep the rest pending, so a
       // long review can be submitted in several sittings.
@@ -304,6 +307,57 @@ export async function approveReview(
   );
 }
 
+async function materializeSemanticAppends(
+  vaultRoot: string,
+  review: Review,
+): Promise<Review> {
+  const changes: ReviewChange[] = [];
+  for (const change of review.changes) {
+    if (change.operation !== "append") {
+      changes.push(change);
+      continue;
+    }
+    if (change.append === undefined) {
+      throw new ReviewError(
+        "CORRUPTED_REVIEW",
+        `Append change ${change.id} has no semantic append metadata.`,
+        { reviewId: review.id, changeId: change.id },
+      );
+    }
+    const target = await resolveSafeTarget(vaultRoot, change.target);
+    if (!target.exists) {
+      throw new ReviewError(
+        "REVIEW_CONFLICT",
+        `Append target disappeared: ${change.target}`,
+        { reviewId: review.id, changeId: change.id },
+      );
+    }
+    const current = await readFile(target.absolutePath, "utf8");
+    const applied = materializeSemanticAppend(current, change.append);
+    if (!applied.ok) {
+      throw new ReviewError(
+        "REVIEW_CONFLICT",
+        `Semantic append cannot be applied to ${change.target}: ${applied.reason}.`,
+        {
+          reviewId: review.id,
+          changeId: change.id,
+          anchor: change.append.anchor,
+          reason: applied.reason,
+        },
+      );
+    }
+    changes.push({
+      ...change,
+      baseContent: current,
+      baseHash: sha256(current),
+      proposalContent: applied.content,
+      proposalHash: sha256(applied.content),
+      hunkDecisions: {},
+    });
+  }
+  return { ...review, changes };
+}
+
 async function prepareTransaction(
   vaultRoot: string,
   storageBase: string,
@@ -404,7 +458,8 @@ async function verifyEntryStillMatches(
 async function commitEntry(entry: TransactionEntry): Promise<void> {
   switch (entry.operation) {
     case "create":
-    case "modify": {
+    case "modify":
+    case "append": {
       if (entry.stagePath === null) throw new Error(`No staged proposal for ${entry.changeId}.`);
       await mkdir(path.dirname(entry.targetPath), { recursive: true });
       if (await exists(entry.targetPath)) {
@@ -548,7 +603,8 @@ export async function rollbackEntries(
 async function rollbackEntry(entry: TransactionEntry): Promise<void> {
   switch (entry.operation) {
     case "create":
-    case "modify": {
+    case "modify":
+    case "append": {
       const backupExists = await exists(entry.backupPath);
       const stageExists = entry.stagePath !== null && (await exists(entry.stagePath));
       if (backupExists) {
@@ -707,6 +763,7 @@ function isTransactionEntry(value: unknown): value is TransactionEntry {
     typeof value["changeId"] === "string" &&
     (value["operation"] === "create" ||
       value["operation"] === "modify" ||
+      value["operation"] === "append" ||
       value["operation"] === "delete" ||
       value["operation"] === "rename") &&
     typeof value["target"] === "string" &&

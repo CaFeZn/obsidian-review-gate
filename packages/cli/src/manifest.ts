@@ -11,6 +11,7 @@ interface RawManifestChange {
   readonly operation?: SubmitOperation;
   readonly target: string;
   readonly newTarget?: string;
+  readonly anchor?: string;
   readonly file?: string;
   readonly content?: string;
 }
@@ -18,6 +19,8 @@ interface RawManifestChange {
 interface RawManifest {
   readonly agent?: string;
   readonly session?: string;
+  readonly batchId?: string;
+  readonly parentReviewId?: string;
   readonly changes: readonly RawManifestChange[];
 }
 
@@ -63,10 +66,12 @@ export async function loadManifest(filename: string): Promise<SubmitReviewInput>
       operation?: SubmitOperation;
       target: string;
       newTarget?: string;
+      anchor?: string;
       proposalContent?: string;
     } = { target: change.target };
     if (change.operation !== undefined) input.operation = change.operation;
     if (change.newTarget !== undefined) input.newTarget = change.newTarget;
+    if (change.anchor !== undefined) input.anchor = change.anchor;
     if (proposalContent !== undefined) input.proposalContent = proposalContent;
     changes.push(input);
   }
@@ -76,6 +81,8 @@ export async function loadManifest(filename: string): Promise<SubmitReviewInput>
   if (parsed.session !== undefined) source.session = parsed.session;
   return {
     ...(Object.keys(source).length === 0 ? {} : { source }),
+    ...(parsed.batchId === undefined ? {} : { batchId: parsed.batchId }),
+    ...(parsed.parentReviewId === undefined ? {} : { parentReviewId: parsed.parentReviewId }),
     changes,
   };
 }
@@ -84,6 +91,8 @@ function isRawManifest(value: unknown): value is RawManifest {
   if (!isRecord(value) || !Array.isArray(value["changes"])) return false;
   if (value["agent"] !== undefined && typeof value["agent"] !== "string") return false;
   if (value["session"] !== undefined && typeof value["session"] !== "string") return false;
+  if (value["batchId"] !== undefined && typeof value["batchId"] !== "string") return false;
+  if (value["parentReviewId"] !== undefined && typeof value["parentReviewId"] !== "string") return false;
   return value["changes"].length > 0 && value["changes"].every(isRawChange);
 }
 
@@ -95,12 +104,14 @@ function isRawChange(value: unknown): value is RawManifestChange {
     value["operation"] !== "create" &&
     value["operation"] !== "modify" &&
     value["operation"] !== "delete" &&
-    value["operation"] !== "rename"
+    value["operation"] !== "rename" &&
+    value["operation"] !== "append"
   ) {
     return false;
   }
   return (
     (value["newTarget"] === undefined || typeof value["newTarget"] === "string") &&
+    (value["anchor"] === undefined || typeof value["anchor"] === "string") &&
     (value["file"] === undefined || typeof value["file"] === "string") &&
     (value["content"] === undefined || typeof value["content"] === "string") &&
     !(value["file"] !== undefined && value["content"] !== undefined)

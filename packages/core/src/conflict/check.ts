@@ -2,6 +2,7 @@ import { readFile } from "../storage/file-system";
 import type { Review, ReviewChange } from "../model/review";
 import { sha256 } from "../model/hash";
 import { resolveSafeTarget } from "../path/safe-path";
+import { materializeSemanticAppend } from "../patch/semantic-append";
 
 export interface ChangeSnapshot {
   readonly changeId: string;
@@ -72,6 +73,23 @@ export async function inspectReviewConflicts(
       (snapshot as { newTargetExists?: boolean }).newTargetExists = newTargetExists;
     }
     snapshots.set(change.id, snapshot);
+
+    if (change.operation === "append") {
+      const applied =
+        currentContent === null || change.append === undefined
+          ? { ok: false as const, reason: "anchor-not-found" as const }
+          : materializeSemanticAppend(currentContent, change.append);
+      if (!applied.ok) {
+        conflicts.push({
+          changeId: change.id,
+          target: change.target,
+          reason: "base-changed",
+          expectedHash: change.baseHash,
+          currentHash,
+        });
+      }
+      continue;
+    }
 
     if (change.operation === "create") {
       if (resolved.exists) {

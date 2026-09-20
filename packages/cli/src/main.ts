@@ -116,6 +116,8 @@ async function dispatch(
       return rejectCommand(service, args);
     case "rebase":
       return rebaseCommand(service, args);
+    case "revert":
+      return revertCommand(service, args);
     case "hunk":
       return hunkCommand(service, args);
     default:
@@ -136,6 +138,9 @@ async function submitCommand(
     "session",
     "operation",
     "new-target",
+    "anchor",
+    "batch-id",
+    "parent-review-id",
   ]);
   const manifest = flag(args, "manifest");
   let input;
@@ -173,14 +178,21 @@ async function submitCommand(
       operation?: SubmitOperation;
       target: string;
       newTarget?: string;
+      anchor?: string;
       proposalContent?: string;
     } = { target };
     if (operation !== undefined) change.operation = operation;
     const newTarget = flag(args, "new-target");
     if (newTarget !== undefined) change.newTarget = newTarget;
+    const anchor = flag(args, "anchor");
+    if (anchor !== undefined) change.anchor = anchor;
     if (proposalContent !== undefined) change.proposalContent = proposalContent;
+    const batchId = flag(args, "batch-id");
+    const parentReviewId = flag(args, "parent-review-id");
     input = {
       ...(Object.keys(source).length === 0 ? {} : { source }),
+      ...(batchId === undefined ? {} : { batchId }),
+      ...(parentReviewId === undefined ? {} : { parentReviewId }),
       changes: [change],
     };
   }
@@ -192,7 +204,16 @@ async function appendCommand(
   service: ReviewService,
   args: ParsedArguments,
 ): Promise<CommandResult> {
-  rejectUnknownFlags(args, ["vault", "target", "file", "agent", "session"]);
+  rejectUnknownFlags(args, [
+    "vault",
+    "target",
+    "file",
+    "agent",
+    "session",
+    "anchor",
+    "batch-id",
+    "parent-review-id",
+  ]);
   const target = requiredFlag(args, "target");
   const filename = requiredFlag(args, "file");
   const proposalContent = await readFile(filename, "utf8").catch((error: unknown) => {
@@ -208,10 +229,22 @@ async function appendCommand(
   const session = flag(args, "session");
   if (agent !== undefined) source.agent = agent;
   if (session !== undefined) source.session = session;
-  const review = await service.append({
+  const anchor = flag(args, "anchor");
+  const batchId = flag(args, "batch-id");
+  const parentReviewId = flag(args, "parent-review-id");
+  const input = {
     ...(Object.keys(source).length === 0 ? {} : { source }),
-    changes: [{ target, proposalContent }],
-  });
+    ...(batchId === undefined ? {} : { batchId }),
+    ...(parentReviewId === undefined ? {} : { parentReviewId }),
+    changes: [
+      {
+        ...(anchor === undefined ? {} : { operation: "append" as const, anchor }),
+        target,
+        proposalContent,
+      },
+    ],
+  };
+  const review = anchor === undefined ? await service.append(input) : await service.submit(input);
   return { document: reviewDocument(review), exitCode: EXIT.success };
 }
 
@@ -254,6 +287,7 @@ async function showCommand(service: ReviewService, args: ParsedArguments): Promi
       operation: change.operation,
       target: change.target,
       ...(change.newTarget === undefined ? {} : { newTarget: change.newTarget }),
+      ...(change.append === undefined ? {} : { append: change.append }),
       baseHash: change.baseHash,
       proposalHash: change.proposalHash,
       baseContent: change.baseContent,
@@ -356,6 +390,22 @@ async function rebaseCommand(service: ReviewService, args: ParsedArguments): Pro
   return { document: reviewDocument(review), exitCode: EXIT.success };
 }
 
+async function revertCommand(
+  service: ReviewService,
+  args: ParsedArguments,
+): Promise<CommandResult> {
+  rejectUnknownFlags(args, ["vault", "agent", "session"]);
+  const source: { agent?: string; session?: string } = {};
+  const agent = flag(args, "agent");
+  const session = flag(args, "session");
+  if (agent !== undefined) source.agent = agent;
+  if (session !== undefined) source.session = session;
+  const review = await service.revert(positional(args, 0, "review id"), {
+    ...(Object.keys(source).length === 0 ? {} : { source }),
+  });
+  return { document: reviewDocument(review), exitCode: EXIT.success };
+}
+
 async function hunkCommand(service: ReviewService, args: ParsedArguments): Promise<CommandResult> {
   rejectUnknownFlags(args, [
     "vault",
@@ -396,13 +446,14 @@ function parseOperation(value: string | undefined): SubmitOperation | undefined 
     value === "create" ||
     value === "modify" ||
     value === "delete" ||
-    value === "rename"
+    value === "rename" ||
+    value === "append"
   ) {
     return value;
   }
   throw new ReviewError(
     "INVALID_ARGUMENTS",
-    "--operation must be auto, create, modify, delete, or rename.",
+    "--operation must be auto, create, modify, delete, rename, or append.",
   );
 }
 
@@ -425,16 +476,17 @@ function parseStatuses(value: string | undefined): readonly ReviewStatus[] | und
 function usage(): string {
   return `Obsidian Review Gate CLI ${VERSION}\n\n` +
     `Usage:\n` +
-    `  obsreview submit --vault <vault> --target <path> --file <proposal> [--agent <name>] [--json]\n` +
+    `  obsreview submit --vault <vault> --target <path> --file <proposal> [--anchor <line>] [--batch-id <id>] [--agent <name>] [--json]\n` +
     `  obsreview submit --vault <vault> --manifest <review.json> [--json]\n` +
-    `  obsreview append --vault <vault> --target <path> --file <proposal> [--agent <name>] [--json]\n` +
+    `  obsreview append --vault <vault> --target <path> --file <fragment> [--anchor <line>] [--batch-id <id>] [--agent <name>] [--json]\n` +
     `  obsreview update <review-id> --vault <vault> --change <id> --file <proposal> [--expected-revision <n>]\n` +
     `  obsreview status <review-id> --vault <vault> [--json]\n` +
     `  obsreview show <review-id> --vault <vault> [--conflict-context] [--json]\n` +
     `  obsreview list --vault <vault> [--status pending,conflicted] [--json]\n` +
     `  obsreview wait <review-id> --vault <vault> [--timeout-ms <ms>] [--json]\n` +
     `  obsreview cancel <review-id> --vault <vault> [--expected-revision <n>] [--json]\n` +
-    `\nAdministrative/UI-equivalent commands: approve, reject, rebase, hunk.\n`;
+    `  obsreview revert <review-id> --vault <vault> [--agent <name>] [--json]\n` +
+    `\nAdministrative/UI-equivalent commands: approve, reject, rebase, revert, hunk.\n`;
 }
 
 if (require.main === module) {

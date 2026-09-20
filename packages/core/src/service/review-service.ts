@@ -6,6 +6,7 @@ import type {
   ReviewChange,
   ReviewOperation,
   ReviewSource,
+  ReviewAppend,
 } from "../model/review";
 import { createChangeId, createReviewId } from "../model/id";
 import { sha256 } from "../model/hash";
@@ -29,6 +30,7 @@ import { lockDirectory, reviewLayout } from "../storage/layout";
 import { withDirectoryLock } from "../storage/lock";
 import { recoverTransactions, type RecoveryItem } from "../storage/recovery";
 import { approveReview, type ApproveOptions, type ApplyResult } from "../patch/apply";
+import { materializeSemanticAppend } from "../patch/semantic-append";
 
 export type SubmitOperation = ReviewOperation | "auto";
 
@@ -36,12 +38,18 @@ export interface SubmitChangeInput {
   readonly operation?: SubmitOperation;
   readonly target: string;
   readonly newTarget?: string;
+  readonly anchor?: string;
+  readonly appendAction?: "append" | "remove";
+  readonly expectedBaseHash?: string | null;
   readonly proposalContent?: string;
 }
 
 export interface SubmitReviewInput {
   readonly id?: string;
   readonly source?: ReviewSource;
+  readonly batchId?: string;
+  readonly parentReviewId?: string;
+  readonly revertsReviewId?: string;
   readonly changes: readonly SubmitChangeInput[];
 }
 
@@ -59,6 +67,10 @@ export interface HunkDecisionInput extends RevisionOptions {
   readonly changeId: string;
   readonly hunkId: string;
   readonly decision: HunkDecisionKind;
+}
+
+export interface RevertReviewInput {
+  readonly source?: ReviewSource;
 }
 
 export interface ReviewServiceOpenOptions {
@@ -133,9 +145,54 @@ export class ReviewService {
       const baseContent = target.exists
         ? await readFile(target.absolutePath, "utf8")
         : null;
+      const baseHash = baseContent === null ? null : sha256(baseContent);
+      if (
+        candidate.expectedBaseHash !== undefined &&
+        candidate.expectedBaseHash !== baseHash
+      ) {
+        throw new ReviewError(
+          "REBASE_CONFLICT",
+          `Target changed while preparing the review: ${target.target}`,
+          {
+            target: target.target,
+            expectedHash: candidate.expectedBaseHash,
+            currentHash: baseHash,
+          },
+        );
+      }
       let proposalContent: string | null;
+      let append: ReviewAppend | undefined;
       if (operation === "delete") {
         proposalContent = null;
+      } else if (operation === "append") {
+        if (candidate.anchor === undefined || candidate.anchor.length === 0) {
+          throw new ReviewError(
+            "INVALID_ARGUMENTS",
+            `Append change requires an anchor: ${target.target}`,
+            { target: target.target, operation },
+          );
+        }
+        if (candidate.proposalContent === undefined || baseContent === null) {
+          throw new ReviewError(
+            "INVALID_ARGUMENTS",
+            `Append change requires fragment content: ${target.target}`,
+            { target: target.target, operation },
+          );
+        }
+        append = {
+          anchor: candidate.anchor,
+          content: candidate.proposalContent,
+          ...(candidate.appendAction === undefined ? {} : { action: candidate.appendAction }),
+        };
+        const applied = materializeSemanticAppend(baseContent, append);
+        if (!applied.ok) {
+          throw new ReviewError(
+            "INVALID_ARGUMENTS",
+            `Semantic append cannot be prepared for ${target.target}: ${applied.reason}.`,
+            { target: target.target, anchor: append.anchor, reason: applied.reason },
+          );
+        }
+        proposalContent = applied.content;
       } else if (candidate.proposalContent !== undefined) {
         proposalContent = candidate.proposalContent;
       } else if (operation === "rename") {
@@ -152,12 +209,15 @@ export class ReviewService {
         id: createChangeId(index + 1),
         operation,
         target: target.target,
-        baseHash: baseContent === null ? null : sha256(baseContent),
+        baseHash,
         baseContent,
         proposalContent,
         proposalHash: proposalContent === null ? null : sha256(proposalContent),
         hunkDecisions: {},
       };
+      if (append !== undefined) {
+        (change as Mutable<ReviewChange>).append = append;
+      }
       if (operation === "rename") {
         if (candidate.newTarget === undefined) {
           throw new ReviewError(
@@ -183,9 +243,10 @@ export class ReviewService {
     await this.assertTargetsAvailable(changes);
 
     const now = new Date().toISOString();
+    const id = input.id ?? createReviewId();
     const review: Review = {
       schemaVersion: 1,
-      id: input.id ?? createReviewId(),
+      id,
       status: "pending",
       revision: 1,
       createdAt: now,
@@ -194,6 +255,13 @@ export class ReviewService {
     };
     if (input.source !== undefined && Object.keys(input.source).length > 0) {
       (review as Mutable<Review>).source = input.source;
+    }
+    (review as Mutable<Review>).batchId = input.batchId ?? id;
+    if (input.parentReviewId !== undefined) {
+      (review as Mutable<Review>).parentReviewId = input.parentReviewId;
+    }
+    if (input.revertsReviewId !== undefined) {
+      (review as Mutable<Review>).revertsReviewId = input.revertsReviewId;
     }
     await this.store.create(review);
     return review;
@@ -257,6 +325,9 @@ export class ReviewService {
       if (existing === undefined) {
         return this.submit({
           ...(input.source === undefined ? {} : { source: input.source }),
+          ...(input.batchId === undefined ? {} : { batchId: input.batchId }),
+          ...(input.parentReviewId === undefined ? {} : { parentReviewId: input.parentReviewId }),
+          ...(input.revertsReviewId === undefined ? {} : { revertsReviewId: input.revertsReviewId }),
           changes: [{ target: target.target, proposalContent }],
         });
       }
@@ -303,10 +374,10 @@ export class ReviewService {
           changeId: input.changeId,
         });
       }
-      if (change.operation === "delete") {
+      if (change.operation === "delete" || change.operation === "append") {
         throw new ReviewError(
           "INVALID_ARGUMENTS",
-          "Delete changes do not have editable proposal content.",
+          `${change.operation} changes do not have editable proposal content.`,
           { reviewId, changeId: change.id },
         );
       }
@@ -362,6 +433,31 @@ export class ReviewService {
     return this.finalizeWithoutApply(reviewId, "cancelled", options);
   }
 
+  public async revert(
+    reviewId: string,
+    input: RevertReviewInput = {},
+  ): Promise<Review> {
+    const original = await this.get(reviewId);
+    if (original.status !== "approved") {
+      throw new ReviewError(
+        "INVALID_STATE_TRANSITION",
+        `Only an approved review can be reverted: ${reviewId}.`,
+        { reviewId, status: original.status },
+      );
+    }
+    const changes: SubmitChangeInput[] = [];
+    for (const change of original.changes) {
+      changes.push(await buildRevertChange(this.vaultRoot, original, change));
+    }
+    return this.submit({
+      ...(input.source === undefined ? {} : { source: input.source }),
+      batchId: original.batchId ?? original.id,
+      parentReviewId: original.id,
+      revertsReviewId: original.id,
+      changes,
+    });
+  }
+
   public async markPotentialConflict(reviewId: string): Promise<Review> {
     return withDirectoryLock(lockDirectory(this.store.storageBase, reviewId), async () => {
       const review = await this.loadAndReconcile(reviewId);
@@ -404,6 +500,32 @@ export class ReviewService {
         if (change.operation === "create") {
           if (snapshot?.exists === true) failed.push(change.id);
           changes.push(change);
+          continue;
+        }
+        if (change.operation === "append") {
+          if (
+            snapshot?.currentContent === null ||
+            snapshot === undefined ||
+            change.append === undefined
+          ) {
+            failed.push(change.id);
+            changes.push(change);
+          } else {
+            const applied = materializeSemanticAppend(snapshot.currentContent, change.append);
+            if (!applied.ok) {
+              failed.push(change.id);
+              changes.push(change);
+            } else {
+              changes.push({
+                ...change,
+                baseContent: snapshot.currentContent,
+                baseHash: sha256(snapshot.currentContent),
+                proposalContent: applied.content,
+                proposalHash: sha256(applied.content),
+                hunkDecisions: {},
+              });
+            }
+          }
           continue;
         }
         if (change.operation === "delete") {
@@ -533,13 +655,8 @@ export class ReviewService {
       statuses: ["pending", "conflicted"],
     });
     const collisions = mutable.filter((review) =>
-      review.changes.some(
-        (change) =>
-          [...incomingPaths].some(
-            (incomingPath) =>
-              sameTarget(change.target, incomingPath) ||
-              (change.newTarget !== undefined && sameTarget(change.newTarget, incomingPath)),
-          ),
+      review.changes.some((existing) =>
+        changes.some((incoming) => changesCompeteForTarget(incoming, existing)),
       ),
     );
     if (collisions.length === 0) return;
@@ -656,6 +773,117 @@ export class ReviewService {
   }
 }
 
+async function buildRevertChange(
+  vaultRoot: string,
+  review: Review,
+  change: ReviewChange,
+): Promise<SubmitChangeInput> {
+  if (change.operation === "create") {
+    const target = await resolveSafeTarget(vaultRoot, change.target);
+    const current = target.exists ? await readFile(target.absolutePath, "utf8") : null;
+    const expected = change.resultHash ?? change.proposalHash;
+    if (current === null || expected === null || sha256(current) !== expected) {
+      throw revertConflict(review, change, "created target changed or disappeared");
+    }
+    return {
+      operation: "delete",
+      target: change.target,
+      expectedBaseHash: expected,
+    };
+  }
+
+  if (change.operation === "delete") {
+    const target = await resolveSafeTarget(vaultRoot, change.target);
+    if (target.exists || change.baseContent === null) {
+      throw revertConflict(review, change, "deleted target was recreated or has no backup");
+    }
+    return {
+      operation: "create",
+      target: change.target,
+      expectedBaseHash: null,
+      proposalContent: change.baseContent,
+    };
+  }
+
+  if (change.operation === "append") {
+    if (change.append === undefined) {
+      throw revertConflict(review, change, "append metadata is missing");
+    }
+    const target = await resolveSafeTarget(vaultRoot, change.target);
+    if (!target.exists) throw revertConflict(review, change, "append target disappeared");
+    const current = await readFile(target.absolutePath, "utf8");
+    const inverseAction = change.append.action === "remove" ? "append" : "remove";
+    const inverse = { ...change.append, action: inverseAction } as const;
+    const materialized = materializeSemanticAppend(current, inverse);
+    if (!materialized.ok) {
+      throw revertConflict(
+        review,
+        change,
+        `semantic fragment cannot be reverted: ${materialized.reason}`,
+      );
+    }
+    return {
+      operation: "append",
+      target: change.target,
+      anchor: change.append.anchor,
+      appendAction: inverseAction,
+      expectedBaseHash: sha256(current),
+      proposalContent: change.append.content,
+    };
+  }
+
+  const sourceTarget = change.operation === "rename" ? change.newTarget : change.target;
+  if (sourceTarget === undefined || change.baseContent === null || change.proposalContent === null) {
+    throw revertConflict(review, change, "approved change has incomplete content metadata");
+  }
+  const target = await resolveSafeTarget(vaultRoot, sourceTarget);
+  if (!target.exists) throw revertConflict(review, change, "current result target disappeared");
+  if (change.operation === "rename") {
+    const destination = await resolveSafeTarget(vaultRoot, change.target);
+    if (destination.exists) {
+      throw revertConflict(review, change, "original rename source path is occupied");
+    }
+  }
+  const current = await readFile(target.absolutePath, "utf8");
+  const inverse: ReviewChange = {
+    ...change,
+    operation: "modify",
+    target: sourceTarget,
+    baseContent: change.proposalContent,
+    baseHash: change.resultHash ?? sha256(change.proposalContent),
+    proposalContent: change.baseContent,
+    proposalHash: sha256(change.baseContent),
+    hunkDecisions: {},
+  };
+  const rebased = rebaseChange(inverse, current);
+  if (!rebased.clean || rebased.change?.proposalContent === null || rebased.change === undefined) {
+    throw revertConflict(review, change, "inverse patch overlaps later edits");
+  }
+  if (change.operation === "rename") {
+    return {
+      operation: "rename",
+      target: sourceTarget,
+      newTarget: change.target,
+      expectedBaseHash: sha256(current),
+      proposalContent: rebased.change.proposalContent,
+    };
+  }
+  return {
+    operation: "modify",
+    target: change.target,
+    expectedBaseHash: sha256(current),
+    proposalContent: rebased.change.proposalContent,
+  };
+}
+
+function revertConflict(review: Review, change: ReviewChange, reason: string): ReviewError {
+  return new ReviewError(
+    "REBASE_CONFLICT",
+    `Review ${review.id} cannot be reverted safely for ${change.target}: ${reason}.`,
+    { reviewId: review.id, changeId: change.id, target: change.target, reason },
+  );
+}
+
 function mutateReview(review: Review, changes: readonly ReviewChange[]): Review {
   return {
     ...review,
@@ -712,6 +940,16 @@ function sameTarget(left: string, right: string): boolean {
   return process.platform === "win32"
     ? left.toLocaleLowerCase("en-US") === right.toLocaleLowerCase("en-US")
     : left === right;
+}
+
+function changesCompeteForTarget(incoming: ReviewChange, existing: ReviewChange): boolean {
+  const incomingPaths = [incoming.target, ...(incoming.newTarget === undefined ? [] : [incoming.newTarget])];
+  const existingPaths = [existing.target, ...(existing.newTarget === undefined ? [] : [existing.newTarget])];
+  const overlaps = incomingPaths.some((incomingPath) =>
+    existingPaths.some((existingPath) => sameTarget(incomingPath, existingPath)),
+  );
+  if (!overlaps) return false;
+  return incoming.operation !== "append" || existing.operation !== "append";
 }
 
 function appendConflict(

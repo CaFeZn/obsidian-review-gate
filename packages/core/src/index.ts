@@ -9,6 +9,7 @@ export * from "./diff/inline";
 export * from "./patch/hunk-operations";
 export * from "./patch/apply";
 export * from "./patch/partial";
+export * from "./patch/semantic-append";
 export * from "./conflict/check";
 export * from "./conflict/rebase";
 export * from "./storage/review-store";

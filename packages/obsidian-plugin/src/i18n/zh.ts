@@ -66,6 +66,8 @@ export const ZH_MESSAGES = {
   oneFile: "{count} 个文件",
   allReviews: "全部审阅",
   openReviewGate: "打开审阅门禁",
+  operationAppend: "追加",
+  operationRemove: "撤销追加",
   operationCreate: "新建",
   operationDelete: "删除",
   operationModify: "修改",

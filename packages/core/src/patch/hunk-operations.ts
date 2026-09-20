@@ -11,7 +11,7 @@ export function applyHunkDecision(
   engine: DiffEngine,
   now = new Date(),
 ): ReviewChange {
-  if (change.proposalContent === null || change.operation === "delete") {
+  if (change.proposalContent === null || change.operation === "delete" || change.operation === "append") {
     throw new ReviewError(
       "INVALID_ARGUMENTS",
       `Hunk operations require editable proposal content for change ${change.id}.`,

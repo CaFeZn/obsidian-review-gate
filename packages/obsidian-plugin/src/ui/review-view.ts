@@ -278,7 +278,7 @@ export class ReviewGateView extends ItemView {
       return;
     }
     const change = historyEntry.change;
-    renderCjkWrappedText(target, `${operationLabel(change.operation)} · ${change.target}`);
+    renderCjkWrappedText(target, `${operationLabel(change)} · ${change.target}`);
     if (change.newTarget !== undefined) {
       target.append(" → ");
       renderCjkWrappedText(target, change.newTarget);
@@ -339,7 +339,8 @@ export class ReviewGateView extends ItemView {
 
     const actionBar = this.contentEl.createDiv({ cls: "obsreview-review-actions" });
     const mutable = review.status === "pending" || review.status === "conflicted";
-    if (mutable && currentChange.proposalContent !== null) {
+    const editable = mutable && currentChange.operation !== "append";
+    if (editable && currentChange.proposalContent !== null) {
       addButton(actionBar, t("editProposal"), () =>
         this.openNativeEditor(review, currentChange, this.nativeMode),
       );
@@ -368,7 +369,7 @@ export class ReviewGateView extends ItemView {
     const proposal = currentChange.proposalContent ?? "";
     const diff = this.service.diffEngine.diff(base, proposal, { contextLines: 0 });
     const diffSummary = this.contentEl.createDiv({ cls: "obsreview-diff-summary" });
-    diffSummary.createSpan({ text: operationLabel(currentChange.operation) });
+    diffSummary.createSpan({ text: operationLabel(currentChange) });
     diffSummary.createEl("code", { text: currentChange.target });
     if (currentChange.newTarget !== undefined) {
       diffSummary.createSpan({ text: `→ ${currentChange.newTarget}` });
@@ -395,8 +396,8 @@ export class ReviewGateView extends ItemView {
           callbacks: {
             active: index === this.hunkIndex,
             ...(decision === undefined ? {} : { decision }),
-            readOnly: !mutable || currentChange.proposalContent === null,
-            ...(mutable && currentChange.proposalContent !== null
+            readOnly: !editable || currentChange.proposalContent === null,
+            ...(editable && currentChange.proposalContent !== null
               ? {
                   onAccept: async (selected: DiffHunk) => {
                     await this.decideHunk(review, currentChange, selected, "accepted");
@@ -633,7 +634,7 @@ function renderFileSelector(
     const button = list.createEl("button", {
       cls: change.id === selectedChangeId ? "is-active" : "",
     });
-    renderCjkWrappedText(button, `${operationSymbol(change.operation)} ${change.target}`);
+    renderCjkWrappedText(button, `${operationSymbol(change)} ${change.target}`);
     button.addEventListener("click", () => onSelect(change.id));
   }
 }
@@ -673,8 +674,11 @@ function sourceLabel(review: Review): string {
   return agent ?? session ?? t("externalAgent");
 }
 
-function operationSymbol(operation: ReviewChange["operation"]): string {
-  switch (operation) {
+function operationSymbol(change: ReviewChange): string {
+  if (change.operation === "append" && change.append?.action === "remove") return "−";
+  switch (change.operation) {
+    case "append":
+      return "+";
     case "create":
       return "A";
     case "modify":
@@ -728,8 +732,13 @@ function statusLabel(status: Review["status"]): string {
   }
 }
 
-function operationLabel(operation: ReviewChange["operation"]): string {
-  switch (operation) {
+function operationLabel(change: ReviewChange): string {
+  if (change.operation === "append" && change.append?.action === "remove") {
+    return t("operationRemove");
+  }
+  switch (change.operation) {
+    case "append":
+      return t("operationAppend");
     case "create":
       return t("operationCreate");
     case "modify":

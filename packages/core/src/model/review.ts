@@ -17,7 +17,13 @@ export type ReviewStatus =
   | "conflicted"
   | "cancelled";
 
-export type ReviewOperation = "create" | "modify" | "delete" | "rename";
+export type ReviewOperation = "create" | "modify" | "delete" | "rename" | "append";
+
+export interface ReviewAppend {
+  readonly anchor: string;
+  readonly content: string;
+  readonly action?: "append" | "remove";
+}
 
 export interface ReviewSource {
   readonly agent?: string;
@@ -60,6 +66,7 @@ export interface ReviewChange {
   readonly operation: ReviewOperation;
   readonly target: string;
   readonly newTarget?: string;
+  readonly append?: ReviewAppend;
 
   /** SHA-256 of the target content captured at submit time. Null for create. */
   readonly baseHash: string | null;
@@ -82,6 +89,9 @@ export interface Review {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly source?: ReviewSource;
+  readonly batchId?: string;
+  readonly parentReviewId?: string;
+  readonly revertsReviewId?: string;
   readonly changes: readonly ReviewChange[];
   readonly conflict?: ReviewConflict;
   readonly decision?: ReviewDecision;
@@ -93,6 +103,7 @@ export interface StoredReviewChange {
   readonly operation: ReviewOperation;
   readonly target: string;
   readonly newTarget?: string;
+  readonly append?: ReviewAppend;
   readonly baseHash: string | null;
   readonly baseFile: string | null;
   readonly proposalFile: string | null;
@@ -109,6 +120,9 @@ export interface StoredReview {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly source?: ReviewSource;
+  readonly batchId?: string;
+  readonly parentReviewId?: string;
+  readonly revertsReviewId?: string;
   readonly changes: readonly StoredReviewChange[];
   readonly conflict?: ReviewConflict;
   readonly decision?: ReviewDecision;
@@ -132,6 +146,9 @@ export function reviewSummary(review: Review): {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly source?: ReviewSource;
+  readonly batchId?: string;
+  readonly parentReviewId?: string;
+  readonly revertsReviewId?: string;
   readonly changeCount: number;
   readonly changes: readonly {
     readonly id: string;
@@ -162,6 +179,9 @@ export function reviewSummary(review: Review): {
     createdAt: string;
     updatedAt: string;
     source?: ReviewSource;
+    batchId?: string;
+    parentReviewId?: string;
+    revertsReviewId?: string;
     changeCount: number;
     changes: typeof changes;
   } = {
@@ -174,5 +194,8 @@ export function reviewSummary(review: Review): {
     changes,
   };
   if (review.source !== undefined) summary.source = review.source;
+  if (review.batchId !== undefined) summary.batchId = review.batchId;
+  if (review.parentReviewId !== undefined) summary.parentReviewId = review.parentReviewId;
+  if (review.revertsReviewId !== undefined) summary.revertsReviewId = review.revertsReviewId;
   return summary;
 }

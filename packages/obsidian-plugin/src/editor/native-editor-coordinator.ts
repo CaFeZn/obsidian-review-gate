@@ -97,7 +97,9 @@ export class NativeEditorCoordinator {
       return;
     }
 
-    const editable = review.status === "pending" || review.status === "conflicted";
+    const editable =
+      (review.status === "pending" || review.status === "conflicted") &&
+      change.operation !== "append";
     const key = `${review.id}:${change.id}:${editable}:${mode}:${change.proposalHash}`;
     if (this.active?.key === key && this.active.pair.isOpen()) {
       await this.active.pair.reveal();

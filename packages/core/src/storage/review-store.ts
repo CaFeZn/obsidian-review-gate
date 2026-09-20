@@ -236,6 +236,9 @@ export class ReviewStore {
       if (change.newTarget !== undefined) {
         (hydrated as Mutable<ReviewChange>).newTarget = change.newTarget;
       }
+      if (change.append !== undefined) {
+        (hydrated as Mutable<ReviewChange>).append = change.append;
+      }
       if (change.resultHash !== undefined) {
         (hydrated as Mutable<ReviewChange>).resultHash = change.resultHash;
       }
@@ -285,6 +288,9 @@ export class ReviewStore {
       };
       if (change.newTarget !== undefined) {
         (storedChange as Mutable<StoredReviewChange>).newTarget = change.newTarget;
+      }
+      if (change.append !== undefined) {
+        (storedChange as Mutable<StoredReviewChange>).append = change.append;
       }
       if (change.resultHash !== undefined) {
         (storedChange as Mutable<StoredReviewChange>).resultHash = change.resultHash;
@@ -384,6 +390,9 @@ function hydrateReview(stored: StoredReview, changes: readonly ReviewChange[]): 
   };
   const mutable = review as Mutable<Review>;
   if (stored.source !== undefined) mutable.source = stored.source;
+  if (stored.batchId !== undefined) mutable.batchId = stored.batchId;
+  if (stored.parentReviewId !== undefined) mutable.parentReviewId = stored.parentReviewId;
+  if (stored.revertsReviewId !== undefined) mutable.revertsReviewId = stored.revertsReviewId;
   if (stored.conflict !== undefined) mutable.conflict = stored.conflict;
   if (stored.decision !== undefined) mutable.decision = stored.decision;
   if (stored.partialFailure !== undefined) mutable.partialFailure = stored.partialFailure;
@@ -405,6 +414,9 @@ function dehydrateReview(
   };
   const mutable = stored as Mutable<StoredReview>;
   if (review.source !== undefined) mutable.source = review.source;
+  if (review.batchId !== undefined) mutable.batchId = review.batchId;
+  if (review.parentReviewId !== undefined) mutable.parentReviewId = review.parentReviewId;
+  if (review.revertsReviewId !== undefined) mutable.revertsReviewId = review.revertsReviewId;
   if (review.conflict !== undefined) mutable.conflict = review.conflict;
   if (review.decision !== undefined) mutable.decision = review.decision;
   if (review.partialFailure !== undefined) mutable.partialFailure = review.partialFailure;
@@ -418,7 +430,7 @@ const REVIEW_STATUSES: readonly ReviewStatus[] = [
   "conflicted",
   "cancelled",
 ];
-const OPERATIONS: readonly ReviewOperation[] = ["create", "modify", "delete", "rename"];
+const OPERATIONS: readonly ReviewOperation[] = ["create", "modify", "delete", "rename", "append"];
 
 function isStoredReview(value: unknown): value is StoredReview {
   if (!isRecord(value)) return false;
@@ -437,6 +449,9 @@ function isStoredReview(value: unknown): value is StoredReview {
     return false;
   }
   if (value["source"] !== undefined && !isSource(value["source"])) return false;
+  if (value["batchId"] !== undefined && typeof value["batchId"] !== "string") return false;
+  if (value["parentReviewId"] !== undefined && typeof value["parentReviewId"] !== "string") return false;
+  if (value["revertsReviewId"] !== undefined && typeof value["revertsReviewId"] !== "string") return false;
   if (value["conflict"] !== undefined && !isConflict(value["conflict"])) return false;
   if (value["decision"] !== undefined && !isDecision(value["decision"])) return false;
   if (value["partialFailure"] !== undefined && !isPartialFailure(value["partialFailure"])) {
@@ -453,6 +468,7 @@ function isStoredChange(value: unknown): value is StoredReviewChange {
     isOperation(value["operation"]) &&
     typeof value["target"] === "string" &&
     (value["newTarget"] === undefined || typeof value["newTarget"] === "string") &&
+    (value["append"] === undefined || isAppend(value["append"])) &&
     (value["baseHash"] === null || typeof value["baseHash"] === "string") &&
     (value["baseFile"] === null || typeof value["baseFile"] === "string") &&
     (value["proposalFile"] === null || typeof value["proposalFile"] === "string") &&
@@ -461,6 +477,21 @@ function isStoredChange(value: unknown): value is StoredReviewChange {
       value["resultHash"] === null ||
       typeof value["resultHash"] === "string") &&
     isHunkDecisions(value["hunkDecisions"])
+  );
+}
+
+function isAppend(value: unknown): value is {
+  readonly anchor: string;
+  readonly content: string;
+  readonly action?: "append" | "remove";
+} {
+  return (
+    isRecord(value) &&
+    typeof value["anchor"] === "string" &&
+    typeof value["content"] === "string" &&
+    (value["action"] === undefined ||
+      value["action"] === "append" ||
+      value["action"] === "remove")
   );
 }
 
