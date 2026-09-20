@@ -98,6 +98,53 @@ test("diff engine creates separated hunks and inline fragments", () => {
   assert.ok(added?.newInline?.some((fragment) => fragment.kind === "add"));
 });
 
+test("diff engine keeps nearby edits as independent reviewable change blocks", () => {
+  const engine = new JsDiffEngine();
+  const base = [
+    "top",
+    "old first",
+    "stable one",
+    "stable two",
+    "old second",
+    "stable three",
+    "stable four",
+    "old third",
+    "stable five",
+    "stable six",
+    "old fourth",
+    "end",
+    "",
+  ].join("\n");
+  const proposal = [
+    "top",
+    "new first",
+    "stable one",
+    "stable two",
+    "new second",
+    "stable three",
+    "stable four",
+    "new third",
+    "stable five",
+    "stable six",
+    "new fourth",
+    "end",
+    "",
+  ].join("\n");
+
+  const result = engine.diff(base, proposal, { contextLines: 0 });
+
+  assert.equal(result.hunks.length, 4);
+  assert.deepEqual(
+    result.hunks.map((hunk) => [hunk.oldStart, hunk.newStart]),
+    [
+      [2, 2],
+      [5, 5],
+      [8, 8],
+      [11, 11],
+    ],
+  );
+});
+
 test("reject hunk mutates proposal only and accept hunk preserves proposal", () => {
   const engine = new JsDiffEngine();
   const base = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\n";

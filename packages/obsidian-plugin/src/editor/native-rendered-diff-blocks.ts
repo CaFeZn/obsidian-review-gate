@@ -434,7 +434,11 @@ function clearRenderedBlocks(editor: NativeRenderedDiffEditor): void {
 }
 
 function clearRenderedBlock(element: HTMLElement): void {
-  element.classList.remove(RENDERED_ADD_CLASS, RENDERED_REMOVE_CLASS);
+  element.classList.remove(
+    RENDERED_ADD_CLASS,
+    RENDERED_REMOVE_CLASS,
+    "obsreview-native-hunk-active",
+  );
   element.removeAttribute(RENDERED_DIFF_ATTRIBUTE);
   element.removeAttribute(HUNK_ATTRIBUTE);
   element.removeAttribute(ALIGNMENT_KEY_ATTRIBUTE);

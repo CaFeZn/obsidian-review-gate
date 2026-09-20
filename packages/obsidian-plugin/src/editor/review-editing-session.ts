@@ -70,7 +70,11 @@ export class ReviewEditingSession {
 
   public diff(changeId: string): DiffResult {
     const change = proposalChange(this.review, changeId);
-    return this.service.diffEngine.diff(change.baseContent ?? "", this.proposal(changeId));
+    return this.service.diffEngine.diff(
+      change.baseContent ?? "",
+      this.proposal(changeId),
+      { contextLines: 0 },
+    );
   }
 
   public acceptRefresh(review: Review): boolean {

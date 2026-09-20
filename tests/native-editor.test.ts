@@ -27,6 +27,85 @@ test("native editor groups separated changes into distinct diff blocks", () => {
   );
 });
 
+test("native editor keeps four nearby review blocks navigable", () => {
+  const base = [
+    "top",
+    "old first",
+    "stable one",
+    "stable two",
+    "old second",
+    "stable three",
+    "stable four",
+    "old third",
+    "stable five",
+    "stable six",
+    "old fourth",
+    "end",
+    "",
+  ].join("\n");
+  const proposal = [
+    "top",
+    "new first",
+    "stable one",
+    "stable two",
+    "new second",
+    "stable three",
+    "stable four",
+    "new third",
+    "stable five",
+    "stable six",
+    "new fourth",
+    "end",
+    "",
+  ].join("\n");
+
+  const blocks = planNativeDiffBlocks(base, proposal);
+
+  assert.equal(blocks.length, 4);
+  assert.deepEqual(
+    blocks.map((block) => block.proposalStart),
+    [2, 5, 8, 11],
+  );
+});
+
+test("native editor only marks the selected hunk as active", () => {
+  const base = "one\nold one\nthree\nold two\nfive\n";
+  const proposal = "one\nnew one\nthree\nnew two\nfive\n";
+  const blocks = planNativeDiffBlocks(base, proposal);
+  const documentValue = EditorState.create({ doc: proposal }).doc;
+
+  const activeClasses = (activeHunkLabel?: string): readonly string[] => {
+    const decorations = buildNativeDiffDecorations(documentValue, {
+      base,
+      proposal,
+      side: "proposal",
+      ...(activeHunkLabel === undefined ? {} : { activeHunkLabel }),
+    });
+    const classes: string[] = [];
+    decorations.between(0, documentValue.length, (_from, _to, value) => {
+      const spec: unknown = value.spec;
+      if (spec === null || typeof spec !== "object") return;
+      const attributes: unknown = Reflect.get(spec, "attributes");
+      if (attributes === null || typeof attributes !== "object") return;
+      const className = Reflect.get(attributes, "class");
+      if (typeof className === "string") classes.push(className);
+    });
+    return classes;
+  };
+
+  assert.equal(
+    activeClasses().filter((className) => className.includes("obsreview-native-hunk-active"))
+      .length,
+    0,
+  );
+  const selected = activeClasses(blocks[1]?.label);
+  assert.equal(
+    selected.filter((className) => className.includes("obsreview-native-hunk-active"))
+      .length,
+    1,
+  );
+});
+
 test("native editor plans blank rows on the shorter side of unequal hunks", () => {
   const fewerBaseLines = planNativeDiffBlocks(
     "top\nold\nend\n",

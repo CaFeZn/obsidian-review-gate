@@ -39,7 +39,7 @@ export function planPartialCommit(
       continue;
     }
     const baseContent = change.baseContent ?? "";
-    const diff = engine.diff(baseContent, change.proposalContent);
+    const diff = engine.diff(baseContent, change.proposalContent, { contextLines: 0 });
     const accepted = diff.hunks.filter(
       (hunk) => change.hunkDecisions[hunk.id]?.decision === "accepted",
     );

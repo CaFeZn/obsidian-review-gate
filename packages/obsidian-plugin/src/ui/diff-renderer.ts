@@ -17,6 +17,7 @@ export interface HunkCallbacks {
   readonly onAccept?: (hunk: DiffHunk) => void | Promise<void>;
   readonly onReject?: (hunk: DiffHunk) => void | Promise<void>;
   readonly decision?: "accepted" | "rejected";
+  readonly active?: boolean;
   readonly readOnly?: boolean;
 }
 
@@ -35,7 +36,9 @@ interface HunkButtonRequest {
 }
 
 export function renderHunk(request: RenderHunkRequest): HTMLElement {
-  const section = request.parent.createDiv({ cls: "obsreview-hunk" });
+  const section = request.parent.createDiv({
+    cls: `obsreview-hunk${request.callbacks.active === true ? " is-active" : ""}`,
+  });
   section.id = `obsreview-hunk-${request.hunk.id}`;
   const header = section.createDiv({ cls: "obsreview-hunk-header" });
   header.createEl("code", {

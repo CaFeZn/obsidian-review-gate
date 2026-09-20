@@ -26,7 +26,7 @@ export function planNativeDiffBlocks(
   base: string,
   proposal: string,
 ): readonly NativeDiffBlock[] {
-  return diffEngine.diff(base, proposal).hunks.map((hunk) => {
+  return diffEngine.diff(base, proposal, { contextLines: 0 }).hunks.map((hunk) => {
     const baseLines = nativeChangedLines(hunk, "base").map(
       (line) => line.oldLine ?? hunk.oldStart,
     );

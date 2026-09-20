@@ -26,7 +26,7 @@ export class ReviewGateView extends ItemView {
   private modePreference: "auto" | DiffMode = "auto";
   private nativeMode: DiffMode = "split";
   private resizeObserver: ResizeObserver | null = null;
-  private hunkIndex = 0;
+  private hunkIndex = -1;
   private selectedHistoryPath: string | null = null;
   private historyQuery = "";
   private renderGeneration = 0;
@@ -196,13 +196,13 @@ export class ReviewGateView extends ItemView {
       this.renderCardTarget(card, review, historyEntry);
       const source = sourceLabel(review);
       card.createEl("small", {
-        text: `${source} · ${t("revisionInline", { revision: review.revision })} · ${review.updatedAt}`,
+        text: `${source} · ${t("revisionInline", { revision: review.revision })} · ${formatLocalTimestamp(review.updatedAt)}`,
       });
       const open = (): void => {
         const firstChange = historyEntry?.change ?? review.changes[0];
         this.selectedReviewId = review.id;
         this.selectedChangeId = firstChange?.id ?? null;
-        this.hunkIndex = 0;
+        this.hunkIndex = -1;
         void this.refresh();
     if (firstChange !== undefined) {
       void this.openNativeEditor(review, firstChange, this.nativeMode);
@@ -328,7 +328,7 @@ export class ReviewGateView extends ItemView {
     this.selectedChangeId = currentChange.id;
     renderFileSelector(this.contentEl, review, currentChange.id, (changeId) => {
       this.selectedChangeId = changeId;
-      this.hunkIndex = 0;
+      this.hunkIndex = -1;
       void this.refresh();
       void this.openNativeEditor(review, selectChange(review, changeId), this.nativeMode);
     });
@@ -366,7 +366,7 @@ export class ReviewGateView extends ItemView {
 
     const base = currentChange.baseContent ?? "";
     const proposal = currentChange.proposalContent ?? "";
-    const diff = this.service.diffEngine.diff(base, proposal);
+    const diff = this.service.diffEngine.diff(base, proposal, { contextLines: 0 });
     const diffSummary = this.contentEl.createDiv({ cls: "obsreview-diff-summary" });
     diffSummary.createSpan({ text: operationLabel(currentChange.operation) });
     diffSummary.createEl("code", { text: currentChange.target });
@@ -385,14 +385,15 @@ export class ReviewGateView extends ItemView {
     if (diff.hunks.length === 0) {
       hunks.createEl("p", { cls: "obsreview-empty", text: t("proposalMatchesBase") });
     } else {
-      this.hunkIndex = clamp(this.hunkIndex, 0, diff.hunks.length - 1);
-      for (const hunk of diff.hunks) {
+      if (this.hunkIndex >= diff.hunks.length) this.hunkIndex = -1;
+      for (const [index, hunk] of diff.hunks.entries()) {
         const decision = currentChange.hunkDecisions[hunk.id]?.decision;
         renderHunk({
           parent: hunks,
           hunk,
           mode: this.mode,
           callbacks: {
+            active: index === this.hunkIndex,
             ...(decision === undefined ? {} : { decision }),
             readOnly: !mutable || currentChange.proposalContent === null,
             ...(mutable && currentChange.proposalContent !== null
@@ -591,7 +592,15 @@ export class ReviewGateView extends ItemView {
       this.contentEl.querySelectorAll<HTMLElement>(".obsreview-hunk"),
     );
     if (elements.length === 0) return;
-    this.hunkIndex = (this.hunkIndex + delta + elements.length) % elements.length;
+    this.hunkIndex =
+      this.hunkIndex < 0
+        ? delta >= 0
+          ? 0
+          : elements.length - 1
+        : (this.hunkIndex + delta + elements.length) % elements.length;
+    elements.forEach((element, index) => {
+      element.toggleClass("is-active", index === this.hunkIndex);
+    });
     elements[this.hunkIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
     this.focusNativeHunk(this.hunkIndex);
   }
@@ -744,6 +753,11 @@ function formatRelative(timestamp: string): string {
   return t("relativeDays", { count: Math.floor(hours / 24) });
 }
 
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
+function formatLocalTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return timestamp;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(date);
 }

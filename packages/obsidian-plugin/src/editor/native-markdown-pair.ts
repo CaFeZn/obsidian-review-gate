@@ -150,7 +150,7 @@ async function createNativeSplitReview(
   );
   const actionElements: HTMLElement[] = [];
   let diffController: NativeDiffPairController | null = null;
-  let hunkIndex = 0;
+  let hunkIndex = -1;
   let busy = false;
 
   const runCommand = async (command: () => Promise<void>): Promise<void> => {
@@ -192,7 +192,12 @@ async function createNativeSplitReview(
       proposalView.getViewData(),
     ).length;
     if (hunkCount === 0) return;
-    hunkIndex = normalizeIndex(hunkIndex + delta, hunkCount);
+    hunkIndex =
+      hunkIndex < 0
+        ? delta >= 0
+          ? 0
+          : hunkCount - 1
+        : normalizeIndex(hunkIndex + delta, hunkCount);
     diffController?.focusHunk(hunkIndex);
   };
   const decideHunk = async (decision: HunkDecisionKind): Promise<void> => {
@@ -307,6 +312,7 @@ class ReviewUnifiedView extends ItemView {
   private diffHost: HTMLElement | null = null;
   private editorController: MergeEditorController | null = null;
   private dirty = false;
+  private activeHunkIndex = -1;
   private readonly saveScheduler: NativeSaveScheduler;
 
   public constructor(
@@ -354,7 +360,11 @@ class ReviewUnifiedView extends ItemView {
   public focusHunk(index: number): void {
     const hunks = Array.from(this.contentEl.querySelectorAll<HTMLElement>(".obsreview-hunk"));
     if (hunks.length === 0) return;
-    hunks[normalizeIndex(index, hunks.length)]?.scrollIntoView({
+    this.activeHunkIndex = normalizeIndex(index, hunks.length);
+    hunks.forEach((hunk, hunkIndex) => {
+      hunk.toggleClass("is-active", hunkIndex === this.activeHunkIndex);
+    });
+    hunks[this.activeHunkIndex]?.scrollIntoView({
       behavior: "smooth",
       block: "center",
     });
@@ -375,7 +385,11 @@ class ReviewUnifiedView extends ItemView {
       summary.createSpan({ text: `→ ${this.request.newTarget}` });
     }
 
-    const diff = new JsDiffEngine().diff(this.request.baseContent, this.proposalContent);
+    const diff = new JsDiffEngine().diff(
+      this.request.baseContent,
+      this.proposalContent,
+      { contextLines: 0 },
+    );
     summary.createSpan({
       text: t(diff.stats.hunkCount === 1 ? "diffSummaryOne" : "diffSummaryMany", {
         added: diff.stats.addedLines,
@@ -414,7 +428,11 @@ class ReviewUnifiedView extends ItemView {
   private renderDiff(): void {
     if (this.diffHost === null) return;
     this.diffHost.empty();
-    const diff = new JsDiffEngine().diff(this.request.baseContent, this.proposalContent);
+    const diff = new JsDiffEngine().diff(
+      this.request.baseContent,
+      this.proposalContent,
+      { contextLines: 0 },
+    );
     const summary = this.diffHost.createDiv({ cls: "obsreview-diff-summary" });
     summary.createSpan({
       text: t(diff.stats.hunkCount === 1 ? "diffSummaryOne" : "diffSummaryMany", {
@@ -428,8 +446,13 @@ class ReviewUnifiedView extends ItemView {
       hunks.createEl("p", { cls: "obsreview-empty", text: t("proposalMatchesBase") });
       return;
     }
-    for (const hunk of diff.hunks) {
-      renderHunk({ parent: hunks, hunk, mode: "unified", callbacks: { readOnly: true } });
+    for (const [index, hunk] of diff.hunks.entries()) {
+      renderHunk({
+        parent: hunks,
+        hunk,
+        mode: "unified",
+        callbacks: { active: index === this.activeHunkIndex, readOnly: true },
+      });
     }
   }
 

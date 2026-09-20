@@ -20,7 +20,7 @@ export function applyHunkDecision(
   }
   const baseContent = change.baseContent ?? "";
 
-  const diff = engine.diff(baseContent, change.proposalContent);
+  const diff = engine.diff(baseContent, change.proposalContent, { contextLines: 0 });
   const hunk = diff.hunks.find((candidate) => candidate.id === hunkId);
   if (hunk === undefined) {
     throw new ReviewError(

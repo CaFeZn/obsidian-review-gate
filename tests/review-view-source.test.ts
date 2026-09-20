@@ -29,3 +29,14 @@ test("batch submission control shares the final approval footer", async () => {
   );
   assert.match(source, /function hasAcceptedHunks\(review: Review\)/u);
 });
+
+test("review cards format ISO timestamps in the local timezone", async () => {
+  const source = await readFile(
+    path.join(process.cwd(), "packages", "obsidian-plugin", "src", "ui", "review-view.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /formatLocalTimestamp\(review\.updatedAt\)/u);
+  assert.match(source, /new Intl\.DateTimeFormat\(undefined, \{[\s\S]*dateStyle: "medium"/u);
+  assert.match(source, /timeStyle: "medium"/u);
+});
