@@ -14,13 +14,16 @@ test("native editor reuses its pair and routes proposal header commands", async 
   const requests: NativeEditorPairRequest[] = [];
   const calls: string[] = [];
   let revealCount = 0;
+  let focusCount = 0;
   let closeCount = 0;
   const pair: NativeEditorPair = {
     isOpen: () => true,
     reveal: async () => {
       revealCount += 1;
     },
-    focusHunk: () => undefined,
+    focusHunk: () => {
+      focusCount += 1;
+    },
     close: () => {
       closeCount += 1;
     },
@@ -69,6 +72,7 @@ test("native editor reuses its pair and routes proposal header commands", async 
 
   assert.equal(requests.length, 1);
   assert.equal(revealCount, 2);
+  assert.equal(focusCount, 0);
   assert.deepEqual(calls, ["save", "decide:1:rejected", "submit-accepted", "approve"]);
   assert.deepEqual(update, { proposalContent: "edited proposal\n", hunkIndex: 2 });
   assert.equal(submitted, true);

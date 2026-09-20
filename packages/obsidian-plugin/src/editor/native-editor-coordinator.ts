@@ -186,7 +186,6 @@ export class NativeEditorCoordinator {
       revision: review.revision,
     };
     await pair.reveal();
-    pair.focusHunk(0);
   }
 
   public async refresh(review: Review): Promise<boolean> {
